@@ -1,0 +1,3160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="診療録">
+    <meta name="theme-color" content="#0066cc">
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./icon-180.png">
+    <link rel="icon" href="./icon-192.png">
+    <title>音声で文書作成 - 診療録・看護記録・議事録ほか</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #0066cc;
+            --primary-dark: #004499;
+            --success: #00aa44;
+            --danger: #dd0000;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-700: #374151;
+            --gray-900: #111827;
+            --surface: #ffffff;
+            --notice-bg: #fff3cd;
+            --notice-fg: #856404;
+            --notice-br: #ffe08a;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --gray-50: #0f172a;
+                --gray-100: #1e293b;
+                --gray-200: #334155;
+                --gray-700: #cbd5e1;
+                --gray-900: #f1f5f9;
+                --surface: #1e293b;
+                --notice-bg: #663c00;
+                --notice-fg: #ffd77a;
+                --notice-br: #8a6a00;
+            }
+        }
+
+        html {
+            /* 横向きにしたときに iOS が文字を勝手に拡大するのを防ぐ */
+            -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--gray-50);
+            color: var(--gray-900);
+            line-height: 1.6;
+            min-height: 100vh;
+            /* ノッチ / ホームインジケータを避ける */
+            padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+                     calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container { max-width: 800px; margin: 0 auto; }
+
+        header { text-align: center; margin-bottom: 20px; padding-top: 12px; }
+
+        h1 { font-size: 24px; font-weight: 600; margin-bottom: 6px; color: var(--primary); }
+
+        .subtitle { font-size: 13px; color: var(--gray-700); }
+
+        .section {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .section { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+        }
+
+        .section-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+
+        .form-group { margin-bottom: 16px; }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        input[type="password"], textarea, select {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            /* iOS はフォントが 16px 未満の入力欄にフォーカスすると自動でズームする */
+            font-size: 16px;
+            font-family: inherit;
+            background-color: var(--surface);
+            color: var(--gray-900);
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        input[type="password"]:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+        }
+
+        textarea { resize: vertical; min-height: 120px; line-height: 1.7; }
+
+        /* -webkit-appearance: none で既定の矢印が消えるため自前で付ける */
+        select {
+            min-height: 48px;
+            padding-right: 40px;
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%230066cc' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+            background-size: 12px 8px;
+        }
+        #transcriptionText { min-height: 150px; }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background-color 0.2s ease, opacity 0.2s ease;
+            -webkit-appearance: none;
+            appearance: none;
+            /* タップ後の遅延と誤ダブルタップズームを防ぐ */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            /* iOS で最低 44px のタップ領域を確保 */
+            min-height: 44px;
+        }
+
+        button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+
+        .btn-primary { background-color: var(--primary); color: white; width: 100%; margin-top: 8px; }
+        .btn-primary:active { background-color: var(--primary-dark); }
+        .btn-primary:disabled { background-color: var(--gray-200); color: var(--gray-700); cursor: not-allowed; }
+
+        .btn-small { padding: 10px 14px; font-size: 14px; width: auto; }
+        .btn-recording { background-color: var(--danger); }
+        .btn-recording:active { background-color: #aa0000; }
+        .btn-copy { background-color: var(--success); color: white; }
+        .btn-copy:active { background-color: #009933; }
+        .btn-share { background-color: var(--primary); color: white; }
+        .btn-clear { background-color: var(--gray-200); color: var(--gray-900); }
+        .btn-clear:active { opacity: 0.7; }
+
+        .recording-indicator {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 12px;
+            background-color: var(--notice-bg);
+            border-radius: 8px;
+            font-size: 14px;
+            color: var(--notice-fg);
+        }
+
+        .recording-indicator.active { display: flex; }
+
+        .pulse {
+            width: 8px; height: 8px; flex: none;
+            background-color: #dd0000;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @media (prefers-reduced-motion: reduce) {
+            .pulse { animation: none; }
+            .spinner { animation-duration: 2s; }
+        }
+
+        /* 作業中のセッション */
+        .session-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            background-color: var(--gray-100);
+            border: 1px solid var(--primary);
+        }
+
+        .session-bar.active { display: flex; }
+        .session-bar > div:first-child { flex: 1; min-width: 0; }
+
+        .session-label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            color: var(--primary);
+        }
+
+        .session-name {
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.4;
+            word-break: break-word;
+        }
+
+        .session-meta { font-size: 12px; color: var(--gray-700); }
+
+        .session-notice {
+            display: none;
+            font-size: 12px;
+            font-weight: 500;
+            line-height: 1.5;
+            margin-top: 4px;
+            color: var(--notice-fg);
+        }
+
+        .session-notice.active { display: block; }
+        .session-bar button { flex: none; }
+
+        .log-item.current { border-color: var(--primary); border-width: 2px; }
+
+        /* 録音中の波形表示 */
+        .waveform-wrap {
+            display: none;
+            margin-top: 12px;
+        }
+
+        .waveform-wrap.active { display: block; }
+
+        #waveform {
+            display: block;
+            width: 100%;
+            height: 72px;
+            border-radius: 8px;
+            background-color: var(--gray-100);
+            border: 1px solid var(--gray-200);
+        }
+
+        .waveform-note {
+            font-size: 13px;
+            line-height: 1.6;
+            margin-top: 6px;
+            min-height: 1.6em;
+            color: var(--gray-700);
+        }
+
+        .waveform-note.warn { color: var(--notice-fg); font-weight: 500; }
+
+        .auto-countdown {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            background-color: var(--gray-100);
+            border: 1px solid var(--primary);
+            font-size: 14px;
+        }
+
+        .auto-countdown.active { display: flex; }
+        .auto-countdown span { flex: 1; }
+        .auto-countdown button { flex: none; }
+
+        .output-section { display: none; }
+        .output-section.active { display: block; }
+
+        .output-text {
+            background-color: var(--gray-100);
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 15px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 60vh;
+            overflow-y: auto;
+            /* iOS で慣性スクロール & 長押しコピーを有効にする */
+            -webkit-overflow-scrolling: touch;
+            -webkit-user-select: text;
+            user-select: text;
+        }
+
+        .loading { display: flex; align-items: center; gap: 8px; color: var(--primary); font-size: 14px; }
+
+        .spinner {
+            width: 16px; height: 16px; flex: none;
+            border: 2px solid var(--gray-200);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        .error-message, .success-message {
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 14px;
+            margin-top: 12px;
+            white-space: pre-wrap;
+        }
+
+        .error-message { background-color: #fee; border: 1px solid #fcc; color: var(--danger); }
+        .success-message { background-color: #efe; border: 1px solid #cfc; color: #0a6; }
+
+        @media (prefers-color-scheme: dark) {
+            .error-message { background-color: #4a1c1c; border-color: #8b3a3a; color: #ff9a9a; }
+            .success-message { background-color: #1c4a1c; border-color: #3a8b3a; color: #9fe3a0; }
+        }
+
+        /* 画面上部の通知帯（環境警告・下書き復元・更新・ホーム画面追加） */
+        .banner {
+            display: none;
+            background-color: var(--notice-bg);
+            border: 1px solid var(--notice-br);
+            border-radius: 8px;
+            padding: 14px 16px;
+            color: var(--notice-fg);
+            font-size: 13.5px;
+            line-height: 1.7;
+            margin-bottom: 12px;
+        }
+
+        /* textContent で改行入りの文字列を入れるものだけ改行を活かす。
+           マークアップを持つバナーに掛けると、タグ間の改行まで表示されてしまう */
+        #envWarning, #draftText { white-space: pre-wrap; }
+
+        .banner.active { display: block; }
+        .banner .banner-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        .banner .banner-actions button { min-height: 40px; padding: 8px 14px; font-size: 14px; width: auto; margin: 0; }
+
+        .checkbox-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--gray-200);
+        }
+
+        .checkbox-row input[type="checkbox"] {
+            flex: none; width: 22px; height: 22px; margin: 1px 0 0;
+            accent-color: var(--primary);
+        }
+
+        .checkbox-row label { margin: 0; }
+
+        .info-text { font-size: 13px; color: var(--gray-700); margin-top: 8px; line-height: 1.7; }
+        .checkbox-row .info-text { margin-top: 2px; }
+
+        .interim-text {
+            font-size: 14px;
+            color: var(--gray-700);
+            min-height: 1.6em;
+            margin-top: 8px;
+            word-break: break-word;
+        }
+
+        .settings-toggle {
+            background: none; border: none; padding: 8px;
+            font-size: 20px; line-height: 1; cursor: pointer;
+            -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+        }
+
+        .settings-panel { display: none; }
+
+        .settings-panel.active {
+            display: block;
+            margin-top: 12px;
+            background-color: var(--gray-100);
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+        /* F-19 テンプレートの編集 */
+        .tpl-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .tpl-state { font-size: 13px; color: var(--primary); }
+        .tpl-field { min-height: 340px; font-size: 16px; }
+        .glossary-field { min-height: 120px; font-size: 16px; }
+        .tpl-warn {
+            display: none;
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            background-color: var(--notice-bg);
+            color: var(--notice-fg);
+            border: 1px solid var(--notice-br);
+        }
+        .tpl-warn.active { display: block; }
+        .tpl-details { margin-bottom: 16px; }
+        .tpl-details summary {
+            font-size: 14px;
+            color: var(--primary);
+            cursor: pointer;
+            padding: 6px 0;
+        }
+        .tpl-preview {
+            margin: 6px 0 0;
+            padding: 10px 12px;
+            border-radius: 6px;
+            background-color: var(--surface);
+            border: 1px solid var(--gray-200);
+            font-family: inherit;
+            font-size: 13px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 40vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            -webkit-user-select: text;
+            user-select: text;
+        }
+
+        .button-group { display: flex; gap: 8px; margin-top: 12px; }
+        .button-group button { flex: 1; margin-top: 0; }
+
+        /* 履歴 */
+        .log-empty { font-size: 14px; color: var(--gray-700); }
+
+        .log-list { display: flex; flex-direction: column; gap: 10px; }
+
+        .log-item {
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            background-color: var(--gray-100);
+            overflow: hidden;
+        }
+
+        .log-item > summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 12px 14px;
+            min-height: 44px;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .log-item > summary::-webkit-details-marker { display: none; }
+
+        .log-when {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            flex-wrap: wrap;
+            font-size: 13px;
+            color: var(--gray-700);
+        }
+
+        .log-time { font-size: 15px; font-weight: 600; color: var(--gray-900); }
+
+        .log-tag {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 999px;
+            background-color: var(--surface);
+            border: 1px solid var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .log-tag.done { border-color: var(--success); color: var(--success); }
+        .log-tag.failed { border-color: var(--danger); color: var(--danger); }
+
+        .log-name {
+            margin-top: 4px;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .log-head { margin-top: 2px; font-size: 13px; line-height: 1.6; color: var(--gray-700); word-break: break-word; }
+
+        .log-body { padding: 0 14px 14px; }
+
+        .log-field { margin-top: 12px; }
+
+        .log-field h4 {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--gray-700);
+            margin-bottom: 4px;
+        }
+
+        .log-field pre {
+            margin: 0;
+            padding: 10px 12px;
+            border-radius: 6px;
+            background-color: var(--surface);
+            border: 1px solid var(--gray-200);
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 40vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            -webkit-user-select: text;
+            user-select: text;
+        }
+
+        .log-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .log-actions button { flex: 1 1 40%; min-width: 92px; margin-top: 0; font-size: 13px; }
+        /* 誤タップを避けるため、削除は他と離して右端に置く */
+        .log-actions button.log-danger { flex: 0 0 auto; margin-left: auto; }
+
+        .footer-note {
+            font-size: 12px;
+            color: var(--gray-700);
+            text-align: center;
+            margin-top: 8px;
+            line-height: 1.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📋 音声で文書作成</h1>
+            <p class="subtitle">診療録・看護記録・問診・看護計画書・紹介状・議事録</p>
+        </header>
+
+        <!-- F-10 環境診断 -->
+        <div class="banner" id="envWarning"></div>
+
+        <!-- F-07 下書きの復元 -->
+        <div class="banner" id="draftBanner">
+            <div id="draftText"></div>
+            <div class="banner-actions">
+                <button type="button" class="btn-primary" id="restoreDraftBtn">復元する</button>
+                <button type="button" class="btn-clear" id="discardDraftBtn">破棄する</button>
+            </div>
+        </div>
+
+        <!-- 10.3 更新の通知 -->
+        <div class="banner" id="updateBanner">
+            <div>新しい版があります。再読み込みすると更新されます。</div>
+            <div class="banner-actions">
+                <button type="button" class="btn-primary" id="reloadBtn">再読み込み</button>
+                <button type="button" class="btn-clear" id="dismissUpdateBtn">あとで</button>
+            </div>
+        </div>
+
+        <!-- F-09 ホーム画面追加の案内 -->
+        <div class="banner" id="installBanner">
+            <div>ホーム画面に追加すると、アプリとして起動できます。<br>
+                 画面下の共有ボタン <strong>⬆︎</strong> →「ホーム画面に追加」</div>
+            <div class="banner-actions">
+                <button type="button" class="btn-clear" id="dismissInstallBtn">今後表示しない</button>
+            </div>
+        </div>
+
+        <!-- F-01 設定 -->
+        <div class="section">
+            <div class="row">
+                <div class="section-title" style="margin: 0;">設定</div>
+                <button type="button" class="settings-toggle" id="settingsToggle" aria-label="設定を開く">⚙️</button>
+            </div>
+            <div class="settings-panel" id="settingsPanel">
+                <div class="form-group">
+                    <label for="apiKey">Claude API キー</label>
+                    <input type="password" id="apiKey" name="claude-api-key" placeholder="sk-ant-..."
+                           autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+                    <p class="info-text">💡 API キーはこの端末の中にだけ保存されます。共用端末では使用後に「消去」してください。</p>
+                    <div class="button-group">
+                        <button type="button" class="btn-primary btn-small" id="saveSettingsBtn">保存</button>
+                        <button type="button" class="btn-clear btn-small" id="clearKeyBtn">消去</button>
+                    </div>
+                </div>
+                <div class="checkbox-row">
+                    <input type="checkbox" id="autoGenerate" checked>
+                    <div>
+                        <label for="autoGenerate">録音を停止したら自動で作成する</label>
+                        <p class="info-text">開始前に <span id="autoDelayLabel">3</span> 秒の猶予があり、その間はキャンセルできます。</p>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--gray-200); margin-bottom: 0;">
+                    <label for="retention">履歴の保存期間</label>
+                    <select id="retention">
+                        <option value="7">7 日</option>
+                        <option value="30">30 日</option>
+                        <option value="90">90 日</option>
+                        <option value="365">1 年</option>
+                        <option value="0">保存しない</option>
+                    </select>
+                    <p class="info-text">録音の開始時刻・書き起こし・メモ・作成結果を端末内に記録し、期間を過ぎたものは自動で削除します。患者情報が端末に残る点にご注意ください。</p>
+                </div>
+                <div class="form-group" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--gray-200);">
+                    <label for="glossary">よく使う語（用語集）</label>
+                    <textarea id="glossary" class="glossary-field"
+                              placeholder="フォシーガ&#10;アムロジピン&#10;胃瘻&#10;ほしいが→フォシーガ"
+                              autocapitalize="none" autocorrect="off" spellcheck="false"></textarea>
+                    <p class="info-text">
+                        1 行に 1 語。院内でよく使う薬剤名・術式・人名などを入れておくと、
+                        聞き取りの誤りを直しやすくなります。<br>
+                        <strong>「ほしいが→フォシーガ」</strong>のように書くと、書き起こしの時点で置き換えます。
+                    </p>
+                    <p class="info-text" id="glossaryCount"></p>
+                </div>
+
+                <div class="checkbox-row">
+                    <input type="checkbox" id="showWaveform" checked>
+                    <div>
+                        <label for="showWaveform">録音中にマイクの波形を表示する</label>
+                        <p class="info-text">声が拾えているかをその場で確認できます。マイクの取得に失敗した場合でも録音は続きます。</p>
+                    </div>
+                </div>
+                <div class="checkbox-row">
+                    <input type="checkbox" id="autoSaveDraft" checked>
+                    <div>
+                        <label for="autoSaveDraft">入力内容をこの端末に一時保存する</label>
+                        <p class="info-text">アプリが強制終了しても書き起こしを復元できます。保存されるのは最新の 1 件だけで、「破棄」で消えます。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 作成する文書の種類 -->
+        <div class="section">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="templateSelect">作成する文書</label>
+                <select id="templateSelect"></select>
+                <p class="info-text" id="templateHint"></p>
+                <div class="tpl-bar">
+                    <span class="tpl-state" id="templateEdited"></span>
+                    <button type="button" class="btn-clear btn-small" id="templateEditToggle">✏️ 指示を編集</button>
+                </div>
+            </div>
+
+            <!-- F-19 テンプレートの編集 -->
+            <div class="settings-panel" id="templateEditor">
+                <p class="info-text" style="margin-top: 0;">
+                    <strong id="tplEditorTitle"></strong><br>
+                    Claude への指示を、この端末だけで書き換えられます。
+                    空欄にすると既定の指示に戻ります。
+                </p>
+
+                <div class="form-group">
+                    <label for="tplPrompt">Claude への指示（全文）</label>
+                    <textarea id="tplPrompt" class="tpl-field"></textarea>
+                    <p class="info-text">
+                        役割・項目の説明・制約・出力形式を、ひとつづきの文章としてまとめて書き換えられます。
+                        この文がそのまま Claude に送られます。
+                    </p>
+                    <div class="tpl-warn" id="tplMissing"></div>
+                </div>
+
+                <details class="tpl-details">
+                    <summary>すべての文書に必ず付く制約（消しても付け直されます）</summary>
+                    <pre class="tpl-preview" id="tplCommonRules"></pre>
+                </details>
+
+                <details class="tpl-details">
+                    <summary>この設定で送られる指示を確認する</summary>
+                    <pre class="tpl-preview" id="tplPreview"></pre>
+                </details>
+
+                <div class="button-group">
+                    <button type="button" class="btn-primary btn-small" id="tplSaveBtn">保存</button>
+                    <button type="button" class="btn-clear btn-small" id="tplResetBtn">既定に戻す</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- F-02 音声入力 -->
+        <div class="section">
+            <div class="section-title">🎤 音声入力</div>
+            <div class="session-bar" id="sessionBar">
+                <div>
+                    <span class="session-label">作業中のセッション</span>
+                    <div class="session-name" id="sessionName"></div>
+                    <div class="session-meta" id="sessionMeta"></div>
+                    <div class="session-notice" id="sessionNotice"></div>
+                </div>
+                <button type="button" class="btn-clear btn-small" id="newSessionBtn">＋ 新規</button>
+            </div>
+            <button type="button" class="btn-primary" id="recordBtn">🎤 録音開始</button>
+            <div class="recording-indicator" id="recordingIndicator">
+                <span class="pulse"></span>
+                <span id="recordingLabel">録音中...</span>
+            </div>
+            <div class="waveform-wrap" id="waveformWrap">
+                <canvas id="waveform" aria-label="マイク入力の波形"></canvas>
+                <p class="waveform-note" id="waveformNote"></p>
+            </div>
+            <div class="interim-text" id="interimText"></div>
+            <div class="auto-countdown" id="autoCountdown">
+                <span id="autoCountdownText"></span>
+                <button type="button" class="btn-clear btn-small" id="cancelAutoBtn">キャンセル</button>
+            </div>
+            <!-- F-03 書き起こしの編集 -->
+            <div class="form-group" style="margin-top: 12px; margin-bottom: 0;">
+                <label for="transcriptionText">書き起こし（手で修正できます）</label>
+                <textarea id="transcriptionText" placeholder="ここに音声認識の結果が入ります。直接入力・修正も可能です。"
+                          autocapitalize="none" autocorrect="off"></textarea>
+                <p class="info-text" id="transcriptHint"></p>
+            </div>
+        </div>
+
+        <!-- F-04 診察メモ -->
+        <div class="section">
+            <div class="section-title" id="notesTitle">📝 診察メモ（オプション）</div>
+            <textarea id="notes" placeholder="診察時のメモを追加（あれば入力してください）"></textarea>
+        </div>
+
+        <!-- F-05 診療録の生成 -->
+        <div class="section">
+            <button type="button" class="btn-primary" id="generateBtn">✨ 診療録を生成</button>
+            <div id="errorMessage"></div>
+            <div id="successMessage"></div>
+            <div id="loadingIndicator" style="display:none; margin-top: 12px;" class="loading">
+                <div class="spinner"></div>
+                <span id="loadingLabel">診療録を作成中...</span>
+            </div>
+        </div>
+
+        <!-- F-06 出力の受け渡し -->
+        <div class="section output-section" id="outputSection">
+            <div class="section-title" id="outputTitle">✅ 作成された診療録</div>
+            <div class="output-text" id="outputText"></div>
+            <div class="button-group">
+                <button type="button" class="btn-share" id="shareBtn" style="display:none;">📤 共有</button>
+                <button type="button" class="btn-copy" id="copyBtn">📋 コピー</button>
+            </div>
+            <div class="button-group">
+                <button type="button" class="btn-clear" id="resetBtn">🗑 破棄</button>
+            </div>
+        </div>
+
+        <!-- 履歴 -->
+        <div class="section">
+            <div class="row">
+                <div class="section-title" style="margin: 0;" id="logTitle">🕘 履歴</div>
+                <button type="button" class="settings-toggle" id="logToggle" aria-label="履歴を開く">▾</button>
+            </div>
+            <div class="settings-panel" id="logPanel">
+                <p class="log-empty" id="logEmpty"></p>
+                <div class="log-list" id="logList"></div>
+                <div class="button-group" id="logBulkActions" style="display:none;">
+                    <button type="button" class="btn-clear btn-small" id="exportLogBtn">📤 書き出す</button>
+                    <button type="button" class="btn-clear btn-small" id="clearLogBtn">🗑 全件削除</button>
+                </div>
+            </div>
+        </div>
+
+        <p class="footer-note">
+            書き起こしは文書の作成時に Claude へ送信されます。<br>
+            録音した音声そのものは保存も送信もされません。
+        </p>
+    </div>
+
+    <script>
+        'use strict';
+
+        var $ = function (id) { return document.getElementById(id); };
+
+        /* ==================================================================
+         * 保存領域
+         *
+         * iOS のプライベートブラウズや「サイト越えトラッキングを防ぐ」設定下では
+         * localStorage へのアクセス自体が例外を投げるため、必ず包む。
+         * ================================================================ */
+        var KEY_API   = 'mv.apiKey';
+        var KEY_DRAFT = 'mv.draft';
+        var KEY_PREFS = 'mv.prefs';
+        var KEY_LOG   = 'mv.log';
+        var KEY_TPL   = 'mv.templates';
+
+        var storage = {
+            get: function (k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } },
+            set: function (k, v) { try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+            remove: function (k) { try { window.localStorage.removeItem(k); } catch (e) { /* noop */ } }
+        };
+
+        // usedBefore: 一度でも生成に成功したか。API キーが消えた原因（C-05）を
+        // 「未設定」と区別して案内するために持つ。
+        var prefs = { autoGenerate: true, autoSaveDraft: true, hideInstallHint: false, usedBefore: false,
+                      showWaveform: true };
+        // 文字列・数値の設定は真偽値と別に扱う（loadPrefs が !! で潰さないように）
+        prefs.template = 'soap';
+        prefs.glossary = '';          // よく使う語（用語集）。1 行に 1 語
+        prefs.retentionDays = 30;     // 0 = 履歴を保存しない
+
+        function loadPrefs() {
+            try {
+                var raw = storage.get(KEY_PREFS);
+                if (raw) {
+                    var saved = JSON.parse(raw);
+                    for (var k in prefs) {
+                        if (!Object.prototype.hasOwnProperty.call(saved, k)) continue;
+                        if (typeof prefs[k] === 'string') prefs[k] = String(saved[k]);
+                        else if (typeof prefs[k] === 'number') {
+                            var num = parseInt(saved[k], 10);
+                            if (!isNaN(num) && num >= 0) prefs[k] = num;
+                        } else prefs[k] = !!saved[k];
+                    }
+                    // 知らないテンプレート名が入っていたら既定に戻す
+                    if (templateById(prefs.template).id !== prefs.template) prefs.template = 'soap';
+                }
+            } catch (e) { /* 壊れていたら既定値のまま */ }
+        }
+
+        function savePrefs() { storage.set(KEY_PREFS, JSON.stringify(prefs)); }
+
+        /* ==================================================================
+         * 実行環境の判定
+         * ================================================================ */
+        var ua = navigator.userAgent;
+        var isIOS = /iPad|iPhone|iPod/.test(ua) ||
+                    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        // iOS では全ブラウザが WebKit だが、音声認識 API を持つのは Safari のみ
+        var isIOSNonSafari = isIOS && /CriOS|FxiOS|EdgiOS|OPiOS|Line\/|FBAN|FBAV|Instagram/i.test(ua);
+        var isStandalone = (window.navigator.standalone === true) ||
+                           (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+        var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        function isSecure() {
+            if (window.isSecureContext) return true;
+            var h = location.hostname;
+            return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+        }
+
+        /* ------------------------------------------------------------------
+         * F-10 環境診断
+         * ---------------------------------------------------------------- */
+        function checkEnvironment() {
+            var msgs = [];
+            if (!isSecure()) {
+                msgs.push('⚠️ このページは安全な接続（HTTPS）ではありません。\n' +
+                          'iPhone の Safari は HTTPS 以外のページでマイクを使用できません。');
+            }
+            if (isIOSNonSafari) {
+                msgs.push('⚠️ このブラウザ（アプリ内ブラウザ / Chrome など）は iOS で音声認識に対応していません。\n' +
+                          '「…」から Safari で開いてください。' +
+                          '音声が使えない場合でも、書き起こし欄に直接入力すれば作成できます。');
+            } else if (!SpeechRecognitionCtor) {
+                msgs.push('⚠️ このブラウザは音声認識に対応していません。\n' +
+                          '書き起こし欄に直接入力すれば作成できます。');
+            }
+            if (!navigator.onLine) {
+                msgs.push('📡 現在オフラインです。録音と編集はできますが、文書の作成には通信が必要です。');
+            }
+            showBanner('envWarning', msgs.join('\n\n'));
+
+            if (!SpeechRecognitionCtor) {
+                $('recordBtn').disabled = true;
+                $('recordBtn').textContent = '🎤 音声認識は利用できません';
+            }
+        }
+
+        function showBanner(id, text) {
+            var el = $(id);
+            if (text) {
+                el.textContent = text;
+                el.classList.add('active');
+            } else {
+                el.classList.remove('active');
+            }
+        }
+
+        window.addEventListener('online', checkEnvironment);
+        window.addEventListener('offline', checkEnvironment);
+
+        /* ==================================================================
+         * F-01 API キーの管理
+         * ================================================================ */
+        function initSettings() {
+            buildTemplateOptions();
+            applyTemplate();
+            var savedApiKey = storage.get(KEY_API);
+            if (savedApiKey) $('apiKey').value = savedApiKey;
+
+            $('autoGenerate').checked = prefs.autoGenerate;
+            $('autoSaveDraft').checked = prefs.autoSaveDraft;
+            $('showWaveform').checked = prefs.showWaveform;
+            $('glossary').value = prefs.glossary;
+            updateGlossaryCount();
+            $('retention').value = String(prefs.retentionDays);
+            // 知らない値が入っていた場合は既定に戻す
+            if (!$('retention').value) { prefs.retentionDays = 30; $('retention').value = '30'; }
+            $('autoDelayLabel').textContent = String(AUTO_GENERATE_DELAY_MS / 1000);
+        }
+
+        function updateGlossaryCount() {
+            var g = glossary();
+            var el = $('glossaryCount');
+            if (!g.terms.length) {
+                el.textContent = '登録なし。空欄でも文書は作成できます。';
+                return;
+            }
+            el.textContent = g.terms.length + ' 語を登録' +
+                (g.fixes.length ? '（うち ' + g.fixes.length + ' 件は置き換え）' : '') + '。';
+        }
+
+        function toggleSettings() { $('settingsPanel').classList.toggle('active'); }
+
+        function saveSettings() {
+            var apiKey = $('apiKey').value.trim();
+            if (!apiKey) {
+                showError('API キーを入力してください');
+                return;
+            }
+            if (!storage.set(KEY_API, apiKey)) {
+                showError('この端末では API キーを保存できません（プライベートブラウズが有効の可能性があります）。\n' +
+                          'このタブを開いている間は、入力した内容がそのまま使われます。');
+                return;
+            }
+            clearError();
+            showSuccess('設定を保存しました');
+            setTimeout(function () { $('settingsPanel').classList.remove('active'); }, 500);
+        }
+
+        function clearApiKey() {
+            storage.remove(KEY_API);
+            $('apiKey').value = '';
+            clearError();
+            showSuccess('API キーを消去しました');
+        }
+
+        function currentApiKey() {
+            // 保存できない端末でも動くよう、入力欄を優先して見る
+            return ($('apiKey').value || '').trim() || (storage.get(KEY_API) || '').trim();
+        }
+
+        // C-05: 7 日以上使わないと OS が保存領域を消すことがある。
+        // 一度は使えていたのに空になっている場合は、理由を添えて知らせる。
+        function apiKeyMissingMessage() {
+            if (prefs.usedBefore) {
+                return 'API キーが見つかりません。\n' +
+                       '7 日以上アプリを開かないと、iOS が保存内容を消すことがあります。\n' +
+                       '歯車アイコンからもう一度入力してください。';
+            }
+            return 'API キーを設定してください（歯車アイコンから）。';
+        }
+
+        /* ==================================================================
+         * F-02 音声入力
+         *
+         * iOS Safari は continuous = true を無視して数秒〜十数秒で停止する（C-03）。
+         * 停止するたびに自動で再開し、利用者が止めるまで録音を続ける。
+         * ================================================================ */
+        var recognition = null;
+        var wantRecording = false;   // 利用者が録音を続けたいか
+        var recognizing = false;     // エンジンが実際に動いているか
+        var restartTimer = null;
+        var sessionStartedAt = 0;
+        var quickFailCount = 0;
+        var pendingInterim = '';       // 確定前の文。打ち切られたら書き起こしへ移す
+        var wakeLock = null;
+
+        function buildRecognition() {
+            var rec = new SpeechRecognitionCtor();
+            rec.lang = 'ja-JP';
+            rec.continuous = true;      // iOS では無視されるので onend で再開する
+            rec.interimResults = true;
+            // 候補を複数もらい、用語集に合うものがあればそれを採る
+            rec.maxAlternatives = 3;
+
+            rec.onstart = function () {
+                recognizing = true;
+                sessionStartedAt = Date.now();
+                setRecordingUI(true);
+                clearError();
+            };
+
+            rec.onresult = function (event) {
+                var interim = '';
+                for (var i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        appendTranscript(pickAlternative(event.results[i]));
+                    } else {
+                        interim += event.results[i][0].transcript;
+                    }
+                }
+                // iOS は喋っている途中でも認識を打ち切る。確定前の文を覚えておき、
+                // 打ち切られたら取りこぼさずに書き起こしへ入れる
+                pendingInterim = interim;
+                $('interimText').textContent = interim;
+                quickFailCount = 0;
+            };
+
+            rec.onerror = function (event) {
+                var err = event.error;
+                // 無音・自動停止は iOS では日常的に起きるので、エラー扱いしない
+                if (err === 'no-speech' || err === 'aborted') return;
+
+                if (err === 'not-allowed' || err === 'service-not-allowed') {
+                    wantRecording = false;
+                    stopWaveform();
+                    // R-01: ホーム画面アプリでの音声認識が動かない既知の問題への案内
+                    var extra = isStandalone
+                        ? '\n\nホーム画面から起動した場合にマイクが使えないことがあります。\n' +
+                          'Safari で同じ URL を開くと動く場合があります。'
+                        : '';
+                    showError('マイクの使用が許可されていません。\n' +
+                              '・「設定」→「Safari」→「マイク」を「許可」\n' +
+                              '・「設定」→「一般」→「キーボード」→「音声入力」をオン\n' +
+                              '・ページを再読み込みしてもう一度お試しください' + extra);
+                } else if (err === 'network') {
+                    showError('音声認識サーバーに接続できませんでした。通信環境を確認してください。');
+                } else if (err === 'audio-capture') {
+                    if (micStream && !waveformBlocked) {
+                        // 波形用に開いたマイクが競合した可能性がある。
+                        // 波形を諦めて、そのまま録音を続ける
+                        waveformBlocked = true;
+                        stopWaveform();
+                        showSuccess('波形の表示を止めて録音を続けます');
+                        clearTimeout(restartTimer);
+                        restartTimer = setTimeout(safeStart, 300);
+                    } else {
+                        wantRecording = false;
+                        showError('マイクが見つかりません。他のアプリがマイクを使用していないか確認してください。');
+                    }
+                } else {
+                    showError('音声認識エラー: ' + err);
+                }
+            };
+
+            rec.onend = function () {
+                recognizing = false;
+                flushPendingInterim();      // 打ち切られた文を取りこぼさない
+                if (!wantRecording) {
+                    setRecordingUI(false);
+                    return;
+                }
+                // iOS の自動停止 → 自動で再開する
+                if (Date.now() - sessionStartedAt < 1000) {
+                    quickFailCount++;
+                } else {
+                    quickFailCount = 0;
+                }
+                if (quickFailCount >= 4) {
+                    wantRecording = false;
+                    stopWaveform();
+                    setRecordingUI(false);
+                    showError('音声認識が繰り返し停止しました。\n' +
+                              'マイクの許可状況を確認して、もう一度「録音開始」を押してください。');
+                    return;
+                }
+                $('recordingLabel').textContent = '録音中...（再接続中）';
+                clearTimeout(restartTimer);
+                // 再開までの間は声を拾えない。できるだけ短くする
+                restartDelay = RESTART_MIN_MS;
+                restartTimer = setTimeout(safeStart, restartDelay);
+            };
+
+            return rec;
+        }
+
+        // 再開の待ち時間。まず最短で試し、駄目なら少しずつ延ばす
+        var RESTART_MIN_MS = 60;
+        var RESTART_MAX_MS = 600;
+        var restartDelay = RESTART_MIN_MS;
+
+        function safeStart() {
+            if (!wantRecording || recognizing) return;
+            try {
+                recognition.start();
+                restartDelay = RESTART_MIN_MS;
+            } catch (e) {
+                // InvalidStateError（多重 start）は少し待って再試行する
+                restartDelay = Math.min(RESTART_MAX_MS, Math.max(RESTART_MIN_MS * 2, restartDelay * 2));
+                clearTimeout(restartTimer);
+                restartTimer = setTimeout(safeStart, restartDelay);
+            }
+        }
+
+        // 確定しないまま打ち切られた文を書き起こしへ移す
+        function flushPendingInterim() {
+            var text = (pendingInterim || '').trim();
+            pendingInterim = '';
+            if (!text) return;
+            appendTranscript(text);
+            $('interimText').textContent = '';
+        }
+
+        function appendTranscript(text) {
+            text = applyGlossaryFixes(String(text || '').trim());
+            if (!text) return;
+            var el = $('transcriptionText');
+            var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+            // 同じ文が二重に入らないようにする（打ち切りと確定が重なった場合）
+            if (el.value && el.value.slice(-text.length) === text) return;
+            if (el.value && !/\s$/.test(el.value) && needsSpace(el.value.slice(-1), text.charAt(0))) {
+                el.value += ' ';
+            }
+            el.value += text;
+            if (atBottom) el.scrollTop = el.scrollHeight;
+            scheduleDraftSave();
+        }
+
+        // 日本語どうしは詰めて繋ぐ。英数字が絡むときだけ空白を入れる
+        function needsSpace(prev, next) {
+            return /[A-Za-z0-9]/.test(prev) || /[A-Za-z0-9]/.test(next);
+        }
+
+        function setRecordingUI(active) {
+            var btn = $('recordBtn');
+            if (active) {
+                btn.textContent = '🛑 録音停止';
+                btn.classList.add('btn-recording');
+                $('recordingLabel').textContent = '録音中...';
+                $('recordingIndicator').classList.add('active');
+            } else {
+                btn.textContent = '🎤 録音開始';
+                btn.classList.remove('btn-recording');
+                $('recordingIndicator').classList.remove('active');
+                $('interimText').textContent = '';
+            }
+        }
+
+        /* ==================================================================
+         * 録音中の波形表示
+         *
+         * 音声認識とは別に getUserMedia でマイクを取り、AnalyserNode の
+         * 時間領域データを描く。声が拾えているかをその場で確認するためのもので、
+         * 取得に失敗しても録音自体は続ける（表示だけ諦める）。
+         * ================================================================ */
+        var audioCtx = null;
+        var analyser = null;
+        var micStream = null;
+        var waveRAF = null;
+        var waveBuf = null;
+        var waveHistory = [];      // 直近の音量。左から右へ流れる
+        var waveColors = null;
+        var loudAt = 0;            // 最後に音を検出した時刻
+        var waveStartedAt = 0;
+        // 音声認識が audio-capture で落ちた場合、原因の可能性があるので
+        // このセッションでは波形を出さない
+        var waveformBlocked = false;
+
+        var SILENCE_LEVEL = 0.012;     // これ未満を無音とみなす
+        var SILENCE_WARN_MS = 4000;    // 無音がこれだけ続いたら知らせる
+
+        // iOS では音声認識の開始・停止のたびに音声処理が止められ、
+        // 波形が平坦なまま戻らないことがある。信号が途切れたら立て直す
+        var waveDeadSince = 0;         // 信号が完全に途切れた時刻
+        var waveRevivedAt = 0;         // 直近で立て直しを試した時刻
+        var waveRetries = 0;           // マイクを取り直した回数
+        var waveReviving = false;      // いま立て直している最中か
+        var WAVE_DEAD_MS = 1200;       // これだけ途切れたら立て直す
+        var WAVE_REVIVE_WAIT_MS = 1200;
+        var WAVE_MAX_RETRY = 2;
+        // 値がまったく動かない場合、本当に静かなだけのこともある。
+        // 表示は無音の案内のままにして、長く続いたときだけ一度取り直す
+        var WAVE_FROZEN_MS = 6000;
+        var waveFrozenSince = 0;
+        var waveFrozenRetried = false;
+        var waveKeepTimers = false;    // 立て直しでは無音の計測をやり直さない
+        var waveHeard = false;         // 一度でも音を拾えたか
+
+        function waveSupported() {
+            return !!(window.AudioContext || window.webkitAudioContext) &&
+                   !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        }
+
+        function readWaveColors() {
+            var cs = getComputedStyle(document.documentElement);
+            function v(name, fallback) {
+                var c = cs.getPropertyValue(name);
+                return (c && c.trim()) || fallback;
+            }
+            // 暗い背景では --primary(#0066cc) が沈むので、バーだけ明るくする
+            var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            waveColors = {
+                bar: dark ? '#4da3ff' : v('--primary', '#0066cc'),
+                quiet: v('--gray-200', '#e5e7eb'),
+                base: v('--gray-200', '#e5e7eb')
+            };
+        }
+
+        function sizeWaveCanvas() {
+            var canvas = $('waveform');
+            var ratio = window.devicePixelRatio || 1;
+            var w = canvas.clientWidth || 320;
+            var h = canvas.clientHeight || 72;
+            canvas.width = Math.round(w * ratio);
+            canvas.height = Math.round(h * ratio);
+        }
+
+        function startWaveform() {
+            if (!prefs.showWaveform || waveformBlocked) return;
+            if (micStream) return;              // 自動再開のたびに取り直さない
+            if (!waveSupported()) return;
+
+            $('waveformWrap').classList.add('active');
+            setWaveNote(waveReviving ? '波形を立て直しています...' : 'マイクを準備しています...', false);
+
+            navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            }).then(function (stream) {
+                if (!wantRecording) {            // 待っている間に止められた
+                    stream.getTracks().forEach(function (t) { t.stop(); });
+                    return;
+                }
+                micStream = stream;
+                var Ctor = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new Ctor();
+                if (audioCtx.state === 'suspended') audioCtx.resume().catch(function () {});
+                var source = audioCtx.createMediaStreamSource(stream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                analyser.smoothingTimeConstant = 0.6;
+                source.connect(analyser);
+                waveBuf = new Uint8Array(analyser.fftSize);
+                waveHistory = [];
+                waveDeadSince = waveRevivedAt = waveFrozenSince = 0;
+                // 立て直しの取り直しでは、無音の計測を続きから見る
+                if (waveKeepTimers) {
+                    waveKeepTimers = false;
+                } else {
+                    loudAt = waveStartedAt = Date.now();
+                    waveHeard = false;
+                }
+                readWaveColors();
+                sizeWaveCanvas();
+                setWaveNote(waveReviving ? '波形を立て直しています...' : '', false);
+                drawWave();
+            }).catch(function () {
+                // 権限が無い・他が使用中など。録音は続くので表示だけ諦める
+                $('waveformWrap').classList.remove('active');
+                setWaveNote('', false);
+            });
+        }
+
+        function setWaveNote(text, warn) {
+            var el = $('waveformNote');
+            el.textContent = text;
+            if (warn) el.classList.add('warn');
+            else el.classList.remove('warn');
+        }
+
+        function drawWave() {
+            if (!analyser) return;
+            waveRAF = requestAnimationFrame(drawWave);
+
+            analyser.getByteTimeDomainData(waveBuf);
+
+            // 128 を中心とした振幅の実効値。あわせて信号の有無も見る
+            var sum = 0, lo = 255, hi = 0;
+            for (var i = 0; i < waveBuf.length; i++) {
+                var v = waveBuf[i];
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+                var d = (v - 128) / 128;
+                sum += d * d;
+            }
+            var level = Math.sqrt(sum / waveBuf.length);
+            // 音声処理が止まっている／マイクの経路が切れている＝確実に信号が無い
+            var dead = (audioCtx && audioCtx.state !== 'running') || micTrackDead();
+            // 値がまったく動かない。静かなだけのこともあるので分けて扱う
+            var frozen = (lo === hi);
+
+            var canvas = $('waveform');
+            var ratio = window.devicePixelRatio || 1;
+            var ctx = canvas.getContext('2d');
+            var w = canvas.width, h = canvas.height;
+            var barW = Math.max(2, Math.round(3 * ratio));
+            var gap = Math.max(1, Math.round(1 * ratio));
+            var maxBars = Math.floor(w / (barW + gap));
+
+            waveHistory.push(level);
+            while (waveHistory.length > maxBars) waveHistory.shift();
+
+            ctx.clearRect(0, 0, w, h);
+
+            // 中心線
+            ctx.fillStyle = waveColors.base;
+            ctx.globalAlpha = 0.8;
+            ctx.fillRect(0, Math.round(h / 2), w, Math.max(1, Math.round(ratio)));
+            ctx.globalAlpha = 1;
+
+            // 右端が最新になるように右詰めで描く
+            var startX = w - waveHistory.length * (barW + gap);
+            for (var b = 0; b < waveHistory.length; b++) {
+                var lv = waveHistory[b];
+                // 小さい声も見えるように圧縮してから伸ばす
+                var amp = Math.min(1, Math.pow(lv * 4.2, 0.7));
+                var barH = Math.max(Math.round(2 * ratio), amp * (h - 8 * ratio));
+                var x = startX + b * (barW + gap);
+                var y = (h - barH) / 2;
+                ctx.fillStyle = lv >= SILENCE_LEVEL ? waveColors.bar : waveColors.quiet;
+                ctx.fillRect(x, y, barW, barH);
+            }
+
+            var now = Date.now();
+
+            // 信号が途切れていたら立て直す。無音の案内より先に扱う
+            if (dead) {
+                if (!waveDeadSince) waveDeadSince = now;
+                if (now - waveDeadSince > WAVE_DEAD_MS) reviveWaveform();
+                return;
+            }
+            waveDeadSince = 0;
+            waveRetries = 0;
+            if (waveReviving) {          // 立て直せたので案内を消す
+                waveReviving = false;
+                setWaveNote('', false);
+            }
+
+            // 値がまったく動かないまま長く続く場合は、静かなだけとは考えにくい。
+            // 表示は無音の案内のままにして、黙って一度だけマイクを取り直す
+            if (frozen) {
+                if (!waveFrozenSince) waveFrozenSince = now;
+                if (!waveFrozenRetried && now - waveFrozenSince > WAVE_FROZEN_MS) {
+                    waveFrozenRetried = true;
+                    restartWaveform();
+                    return;
+                }
+            } else {
+                waveFrozenSince = 0;
+            }
+
+            // 無音が続いたら知らせる
+            if (level >= SILENCE_LEVEL) { loudAt = now; waveHeard = true; }
+            if (now - loudAt > SILENCE_WARN_MS && now - waveStartedAt > SILENCE_WARN_MS) {
+                setWaveNote('音を検出できていません。マイクを塞いでいないか、音量を確認してください。', true);
+            } else if (waveHeard && now - loudAt < 400) {
+                setWaveNote('音声を検出しています', false);
+            }
+        }
+
+        function micTrackDead() {
+            if (!micStream || !micStream.getAudioTracks) return false;
+            var t = micStream.getAudioTracks()[0];
+            return !t || t.readyState === 'ended' || t.muted;
+        }
+
+        // 波形の信号が途切れたときの立て直し。録音そのものには触れない
+        function reviveWaveform() {
+            var now = Date.now();
+            if (now - waveRevivedAt < WAVE_REVIVE_WAIT_MS) return;
+            waveRevivedAt = now;
+
+            // iOS は認識の開始・停止で音声処理を止めることがある。まず再開を試す
+            if (audioCtx && audioCtx.state === 'suspended') {
+                waveReviving = true;
+                setWaveNote('マイクを再開しています...', false);
+                audioCtx.resume().catch(function () {});
+                return;
+            }
+            // それでも来なければマイクを取り直す
+            if (waveRetries < WAVE_MAX_RETRY) {
+                waveRetries++;
+                waveReviving = true;
+                setWaveNote('マイクを取り直しています...', false);
+                restartWaveform();
+                return;
+            }
+            waveReviving = false;
+            setWaveNote('波形を表示できません（マイクが音声認識や他のアプリに使われている可能性があります）。' +
+                        '録音と書き起こしは続いています。', true);
+        }
+
+        // 取り直しの回数と立て直し中の表示は引き継ぐ（案内が消えないように）
+        function restartWaveform() {
+            var keep = {
+                retries: waveRetries, reviving: waveReviving, frozenTried: waveFrozenRetried,
+                loudAt: loudAt, startedAt: waveStartedAt, heard: waveHeard
+            };
+            stopWaveform();
+            waveRetries = keep.retries;
+            waveReviving = keep.reviving;
+            waveFrozenRetried = keep.frozenTried;
+            loudAt = keep.loudAt;
+            waveStartedAt = keep.startedAt;
+            waveHeard = keep.heard;
+            waveKeepTimers = true;
+            if (wantRecording) startWaveform();
+            else waveKeepTimers = false;
+        }
+
+        function stopWaveform() {
+            if (waveRAF) { cancelAnimationFrame(waveRAF); waveRAF = null; }
+            if (micStream) {
+                micStream.getTracks().forEach(function (t) { t.stop(); });
+                micStream = null;
+            }
+            if (audioCtx) {
+                audioCtx.close().catch(function () {});
+                audioCtx = null;
+            }
+            analyser = null;
+            waveBuf = null;
+            waveHistory = [];
+            waveDeadSince = waveRevivedAt = waveFrozenSince = 0;
+            waveRetries = 0;
+            waveReviving = false;
+            waveFrozenRetried = false;
+            waveHeard = false;
+            $('waveformWrap').classList.remove('active');
+            setWaveNote('', false);
+        }
+
+        window.addEventListener('resize', function () {
+            if (analyser) sizeWaveCanvas();
+        });
+
+        if (window.matchMedia) {
+            var darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+            var onScheme = function () { if (analyser) readWaveColors(); };
+            if (darkQuery.addEventListener) darkQuery.addEventListener('change', onScheme);
+            else if (darkQuery.addListener) darkQuery.addListener(onScheme);
+        }
+
+        // C-06: 画面が消えると認識が止まるため、録音中はスリープを抑止する
+        function requestWakeLock() {
+            if (!('wakeLock' in navigator)) return;
+            navigator.wakeLock.request('screen').then(function (lock) {
+                wakeLock = lock;
+                lock.addEventListener('release', function () { wakeLock = null; });
+            }).catch(function () { /* 取得できなくても録音自体は続く */ });
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release().catch(function () {});
+                wakeLock = null;
+            }
+        }
+
+        function toggleRecording() {
+            if (!SpeechRecognitionCtor) {
+                showError('このブラウザは音声認識に対応していません。書き起こし欄に直接入力してください。');
+                return;
+            }
+            if (!isSecure()) {
+                showError('HTTPS で開いていないため、マイクを使用できません。\nhttps:// の URL で開き直してください。');
+                return;
+            }
+            if (wantRecording) {
+                stopRecording(true);
+                return;
+            }
+            cancelAutoGenerate();
+
+            // 作成済み、または作成する文書を変えていたら、ここで新しいセッションにする
+            if (templateChangedForSession || sessionCompleted) {
+                var noun = currentTemplate().noun;
+                var why = templateChangedForSession
+                    ? '作成する文書を変えたため、新しく作り直します。'
+                    : noun + 'は作成済みのため、新しい記録として始めます。';
+                if (workspaceHasContent() && !prefs.retentionDays) {
+                    // 履歴を保存しない設定では、消すと戻せないので確認する
+                    var ok = window.confirm(
+                        why + '\n' +
+                        '履歴を保存しない設定のため、いまの入力内容は失われます。\n\n' +
+                        'よろしいですか？');
+                    if (!ok) return;
+                } else if (workspaceHasContent()) {
+                    showSuccess(templateChangedForSession
+                        ? '新しいセッションを始めます（前の内容は履歴に残っています）'
+                        : '新しい記録を始めます（前の' + noun + 'は履歴に残っています）');
+                }
+                clearWorkspace();
+            }
+
+            if (!recognition) recognition = buildRecognition();
+            wantRecording = true;
+            quickFailCount = 0;
+            requestWakeLock();
+            // iOS ではユーザー操作と同じイベント内で start() を呼ぶ必要がある
+            safeStart();
+            // AudioContext も操作と同じイベント内で作る（iOS は suspended で始まる）
+            startWaveform();
+            setRecordingUI(true);
+            logRecordingStarted();
+        }
+
+        // byUser: 利用者が「録音停止」を押した場合のみ true。
+        // 画面切替やエラーによる停止では自動作成を始めない。
+        function stopRecording(byUser) {
+            wantRecording = false;
+            clearTimeout(restartTimer);
+            releaseWakeLock();
+            stopWaveform();
+            if (recognition) {
+                try { recognition.stop(); } catch (e) { /* noop */ }
+            }
+            setRecordingUI(false);
+            saveDraftNow();
+            logSnapshot({ endedAt: Date.now() });   // 録音区間もここで足される
+            if (byUser) scheduleAutoGenerate();
+        }
+
+        // 他アプリへ切り替わると iOS は認識を復帰できないため、いったん止める
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                saveDraftNow();
+                if (wantRecording) {
+                    stopRecording(false);
+                    showSuccess('画面が切り替わったため録音を停止しました');
+                }
+            }
+        });
+
+        /* ==================================================================
+         * 録音停止後の自動作成
+         *
+         * すぐには送らず数秒待つ。送信は課金と患者情報の送信を伴うため、
+         * 押し間違いや明らかな誤認識に気づいたときに止められるようにする。
+         * ================================================================ */
+        var AUTO_GENERATE_DELAY_MS = 3000;
+        var autoTimer = null;
+        var autoDeadline = 0;
+
+        function scheduleAutoGenerate() {
+            if (!prefs.autoGenerate) return;
+            if (generating) return;
+            if (!$('transcriptionText').value.trim()) return;   // 空振りでは何もしない
+
+            if (!currentApiKey()) {
+                showError(apiKeyMissingMessage() + '\n設定すると、録音停止後に自動で作成します。');
+                return;
+            }
+
+            clearError();
+            autoDeadline = Date.now() + AUTO_GENERATE_DELAY_MS;
+            $('autoCountdown').classList.add('active');
+            tickAutoGenerate();
+        }
+
+        function tickAutoGenerate() {
+            var remain = Math.ceil((autoDeadline - Date.now()) / 1000);
+            if (remain <= 0) {
+                hideAutoCountdown();
+                generateRecord();
+                return;
+            }
+            $('autoCountdownText').textContent = remain + ' 秒後に' + currentTemplate().noun + 'の作成を開始します';
+            autoTimer = setTimeout(tickAutoGenerate, 250);
+        }
+
+        function hideAutoCountdown() {
+            clearTimeout(autoTimer);
+            autoTimer = null;
+            $('autoCountdown').classList.remove('active');
+        }
+
+        function cancelAutoGenerate(notify) {
+            if (!autoTimer && !$('autoCountdown').classList.contains('active')) return;
+            hideAutoCountdown();
+            if (notify) showSuccess('自動作成を取り消しました。「' + currentTemplate().noun + 'を生成」でいつでも作成できます');
+        }
+
+        // 書き起こしやメモを直し始めたら、まだ作業中とみなして自動作成を止める
+        function onEditInput() {
+            cancelAutoGenerate(true);
+            scheduleDraftSave();
+        }
+
+        /* ==================================================================
+         * F-07 下書きの自動保存と復元
+         * ================================================================ */
+        var draftTimer = null;
+        var pendingDraft = null;   // 起動時に見つかった下書き
+
+        function scheduleDraftSave() {
+            if (!prefs.autoSaveDraft) return;
+            clearTimeout(draftTimer);
+            draftTimer = setTimeout(saveDraftNow, 1000);
+        }
+
+        function saveDraftNow() {
+            clearTimeout(draftTimer);
+            if (!prefs.autoSaveDraft) return;
+            var transcript = $('transcriptionText').value;
+            var notes = $('notes').value;
+            if (!transcript.trim() && !notes.trim()) {
+                storage.remove(KEY_DRAFT);
+                return;
+            }
+            storage.set(KEY_DRAFT, JSON.stringify({
+                transcript: transcript, notes: notes, at: Date.now()
+            }));
+        }
+
+        function checkDraft() {
+            var raw = storage.get(KEY_DRAFT);
+            if (!raw) return;
+            try {
+                var d = JSON.parse(raw);
+            } catch (e) {
+                storage.remove(KEY_DRAFT);
+                return;
+            }
+            if (!d || (!(d.transcript || '').trim() && !(d.notes || '').trim())) return;
+
+            pendingDraft = d;
+            var when = new Date(d.at || Date.now());
+            var stamp = (when.getMonth() + 1) + '月' + when.getDate() + '日 ' +
+                        ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2);
+            var head = (d.transcript || d.notes || '').trim().slice(0, 40);
+            $('draftText').textContent = '前回の入力が残っています（' + stamp + '）\n「' + head + '…」';
+            $('draftBanner').classList.add('active');
+        }
+
+        function restoreDraft() {
+            if (!pendingDraft) return;
+            $('transcriptionText').value = pendingDraft.transcript || '';
+            $('notes').value = pendingDraft.notes || '';
+            pendingDraft = null;
+            $('draftBanner').classList.remove('active');
+            showSuccess('前回の入力を復元しました');
+        }
+
+        function discardDraft() {
+            pendingDraft = null;
+            storage.remove(KEY_DRAFT);
+            $('draftBanner').classList.remove('active');
+        }
+
+        // 予期しない終了に備え、離れる直前にも保存する
+        window.addEventListener('pagehide', saveDraftNow);
+
+        /* ==================================================================
+         * 履歴（ログ）
+         *
+         * 録音を始めた時刻から 1 件を起こし、停止・生成のたびに更新する。
+         * 保存先は端末内のみ。保存期間を過ぎたものは起動時と保存時に自動で消す。
+         * ================================================================ */
+        var MAX_LOG_ENTRIES = 300;      // 期間内でもこれを超えたら古いものから捨てる
+        var currentLogId = null;
+
+        function loadLog() {
+            var raw = storage.get(KEY_LOG);
+            if (!raw) return [];
+            try {
+                var list = JSON.parse(raw);
+                return Object.prototype.toString.call(list) === '[object Array]' ? list : [];
+            } catch (e) {
+                storage.remove(KEY_LOG);
+                return [];
+            }
+        }
+
+        // 保存期間を過ぎたもの、件数超過分を落とす
+        function pruneLog(list) {
+            if (!prefs.retentionDays) return [];
+            var limit = Date.now() - prefs.retentionDays * 24 * 60 * 60 * 1000;
+            var kept = [];
+            for (var i = 0; i < list.length; i++) {
+                if ((list[i].startedAt || 0) >= limit) kept.push(list[i]);
+            }
+            kept.sort(function (a, b) { return (b.startedAt || 0) - (a.startedAt || 0); });
+            if (kept.length > MAX_LOG_ENTRIES) kept = kept.slice(0, MAX_LOG_ENTRIES);
+            return kept;
+        }
+
+        function saveLog(list) {
+            list = pruneLog(list);
+            if (!list.length) {
+                storage.remove(KEY_LOG);
+                return list;
+            }
+            // 容量が足りなければ古いものから落として入るまで試す
+            for (var attempt = 0; attempt < 12 && list.length; attempt++) {
+                if (storage.set(KEY_LOG, JSON.stringify(list))) return list;
+                list = list.slice(0, Math.max(1, list.length - Math.ceil(list.length / 4)));
+                if (list.length === 1) {
+                    if (storage.set(KEY_LOG, JSON.stringify(list))) return list;
+                    break;
+                }
+            }
+            storage.remove(KEY_LOG);
+            return [];
+        }
+
+        function findLogIndex(list, id) {
+            for (var i = 0; i < list.length; i++) if (list[i].id === id) return i;
+            return -1;
+        }
+
+        // 指定した 1 件を更新する。見つからなければ何もしない
+        function patchLogById(id, patch) {
+            if (!prefs.retentionDays || !id) return false;
+            var list = loadLog();
+            var idx = findLogIndex(list, id);
+            if (idx < 0) return false;
+            for (var k in patch) {
+                if (Object.prototype.hasOwnProperty.call(patch, k)) list[idx][k] = patch[k];
+            }
+            var saved = saveLog(list);
+            if (findLogIndex(saved, id) < 0 && currentLogId === id) currentLogId = null;
+            renderLog();
+            // 題名は後から非同期で届くので、作業中の表示もここで直す
+            if (id === currentLogId) updateSessionBar();
+            return true;
+        }
+
+        // 作業中の 1 件を作る／更新する
+        function updateCurrentLog(patch, createIfMissing) {
+            if (!prefs.retentionDays) return;
+            if (currentLogId && patchLogById(currentLogId, patch)) return;
+            if (!createIfMissing) return;
+
+            var list = loadLog();
+            currentLogId = String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8);
+            var t = currentTemplate();
+            var entry = {
+                id: currentLogId,
+                startedAt: Date.now(),
+                template: t.id,
+                templateLabel: t.label,
+                segments: []
+            };
+            for (var k in patch) {
+                if (Object.prototype.hasOwnProperty.call(patch, k)) entry[k] = patch[k];
+            }
+            list.unshift(entry);
+            var saved = saveLog(list);
+            if (findLogIndex(saved, currentLogId) < 0) currentLogId = null;
+            renderLog();
+            updateSessionBar();
+        }
+
+        // 録音の開始。セッションを開いている場合は、その続きとして追記する
+        var pendingSegmentStart = 0;
+
+        function logRecordingStarted() {
+            pendingSegmentStart = Date.now();
+            if (!currentLogId) updateCurrentLog({ startedAt: pendingSegmentStart }, true);
+            updateSessionBar();
+        }
+
+        function logSnapshot(extra) {
+            var patch = {
+                transcript: $('transcriptionText').value,
+                notes: $('notes').value,
+                template: currentTemplate().id,
+                templateLabel: currentTemplate().label
+            };
+            for (var k in extra) {
+                if (Object.prototype.hasOwnProperty.call(extra, k)) patch[k] = extra[k];
+            }
+            // 録音が終わったところなら、その回を区間として足す
+            if (pendingSegmentStart) {
+                var list = loadLog();
+                var idx = currentLogId ? findLogIndex(list, currentLogId) : -1;
+                var segs = (idx >= 0 && list[idx].segments) ? list[idx].segments.slice() : [];
+                segs.push({ s: pendingSegmentStart, e: Date.now() });
+                patch.segments = segs;
+                pendingSegmentStart = 0;
+            }
+            updateCurrentLog(patch, true);
+            updateSessionBar();
+        }
+
+        /* ------------------------------------------------------------------
+         * 履歴のタイトル
+         *
+         * 書き起こしに人名があればその名前を、無ければ内容の要点を
+         * 10 文字程度にまとめる。Claude への問い合わせは本文の生成とは
+         * 別に投げ、失敗しても本文には影響させない。
+         * ---------------------------------------------------------------- */
+        var TITLE_MAX = 16;
+
+        function localTitle(entry) {
+            var t = ((entry.transcript || '') + ' ' + (entry.notes || '')).replace(/\s+/g, ' ').trim();
+            if (!t) return '';
+            return t.length > 12 ? t.slice(0, 12) + '…' : t;
+        }
+
+        function titleSystemPrompt() {
+            return '書き起こしに人名（患者名・出席者名など）が含まれていれば、その名前を入れた題名を作ってください。\n' +
+                   '人名が無ければ、内容の要点を表す題名にしてください。\n\n' +
+                   '制約：\n' +
+                   '- 10 文字程度。最大 ' + TITLE_MAX + ' 文字\n' +
+                   '- 題名だけを出力する。前置き・引用符・句点・記号を付けない\n' +
+                   '- 書き起こしに無い情報を加えない。人名を創作しない\n' +
+                   '- 敬称は書き起こしのとおりに扱う\n' +
+                   '- 改行しない';
+        }
+
+        function cleanTitle(text) {
+            var t = (text || '').split('\n')[0].trim();
+            t = t.replace(/^[「『"\'\s]+|[」』"\'\s。．.]+$/g, '');
+            if (t.length > TITLE_MAX) t = t.slice(0, TITLE_MAX);
+            return t;
+        }
+
+        // entryId を指定して非同期に付ける。途中で別セッションに切り替えても正しい 1 件に入る
+        function requestTitle(entryId, transcript, notes) {
+            var apiKey = currentApiKey();
+            if (!apiKey || !entryId || !transcript.trim()) return;
+            if (!navigator.onLine) return;
+
+            var body = '【書き起こし】\n' + transcript;
+            if (notes) body += '\n\n【メモ】\n' + notes;
+            body += '\n\n上記の題名を作ってください。';
+
+            var controller = ('AbortController' in window) ? new AbortController() : null;
+            var timer = controller ? setTimeout(function () { controller.abort(); }, 60000) : null;
+
+            fetch(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    'anthropic-dangerous-direct-browser-access': 'true'
+                },
+                body: JSON.stringify({
+                    model: 'claude-opus-5',
+                    max_tokens: 64,
+                    output_config: { effort: 'low' },
+                    system: titleSystemPrompt(),
+                    messages: [{ role: 'user', content: body }]
+                }),
+                signal: controller ? controller.signal : undefined
+            }).then(function (res) {
+                if (!res.ok) throw new Error('title');
+                return res.json();
+            }).then(function (data) {
+                if (data.stop_reason === 'refusal') return;
+                var text = (data.content || [])
+                    .filter(function (b) { return b.type === 'text'; })
+                    .map(function (b) { return b.text; }).join('');
+                var title = cleanTitle(text);
+                if (title) patchLogById(entryId, { title: title, titleAuto: true });
+            }).catch(function () {
+                // 題名が付かなくても、日時と冒頭で識別できるので何もしない
+            }).then(function () {
+                if (timer) clearTimeout(timer);
+            });
+        }
+
+        function deleteLogEntry(id) {
+            var list = loadLog();
+            var idx = findLogIndex(list, id);
+            if (idx < 0) return;
+            list.splice(idx, 1);
+            saveLog(list);
+            if (currentLogId === id) currentLogId = null;
+            renderLog();
+            updateSessionBar();
+            showSuccess('履歴を 1 件削除しました');
+        }
+
+        function clearLog() {
+            storage.remove(KEY_LOG);
+            currentLogId = null;
+            renderLog();
+            updateSessionBar();
+            showSuccess('履歴をすべて削除しました');
+        }
+
+        /* ------------------------------------------------------------------
+         * 作業中のセッション
+         * ---------------------------------------------------------------- */
+        // 作成する文書を変えたら、次の録音は新しいセッションにする
+        var templateChangedForSession = false;
+        // 文書を作り終えたら、次の録音は新しいセッションにする
+        // （履歴の「続きを録音」で開いた場合だけ、続きとして書き足す）
+        var sessionCompleted = false;
+
+        function workspaceHasContent() {
+            return !!($('transcriptionText').value.trim() ||
+                      $('notes').value.trim() ||
+                      $('outputText').textContent.trim());
+        }
+
+        function currentEntry() {
+            if (!currentLogId) return null;
+            var list = loadLog();
+            var idx = findLogIndex(list, currentLogId);
+            return idx < 0 ? null : list[idx];
+        }
+
+        function entryTitle(entry) {
+            return (entry && (entry.title || localTitle(entry))) || '';
+        }
+
+        function totalRecorded(entry) {
+            var segs = (entry && entry.segments) || [];
+            var ms = 0;
+            for (var i = 0; i < segs.length; i++) {
+                if (segs[i].e > segs[i].s) ms += segs[i].e - segs[i].s;
+            }
+            if (!ms && entry && entry.endedAt > entry.startedAt) ms = entry.endedAt - entry.startedAt;
+            return ms;
+        }
+
+        function fmtMs(ms) {
+            var sec = Math.round(ms / 1000);
+            if (sec < 60) return sec + ' 秒';
+            return Math.floor(sec / 60) + ' 分 ' + ('0' + (sec % 60)).slice(-2) + ' 秒';
+        }
+
+        function updateSessionBar() {
+            var notice = $('sessionNotice');
+            var entry = currentEntry();
+
+            if (!entry) {
+                // 履歴の 1 件はまだ無いが、未保存の入力が残っている場合
+                if ((templateChangedForSession || sessionCompleted) && workspaceHasContent()) {
+                    $('sessionBar').classList.add('active');
+                    $('sessionName').textContent = '未保存の入力';
+                    $('sessionMeta').textContent = '';
+                    notice.textContent = templateChangedForSession
+                        ? '⚠️ 作成する文書を変えたため、次に録音を始めると新しく作り直します'
+                        : '✅ 作成済みです。次に録音を始めると新しい記録になります';
+                    notice.classList.add('active');
+                } else {
+                    $('sessionBar').classList.remove('active');
+                    notice.textContent = '';
+                    notice.classList.remove('active');
+                }
+                return;
+            }
+            $('sessionBar').classList.add('active');
+            $('sessionName').textContent = entryTitle(entry) || '（題名なし）';
+
+            var parts = [];
+            if (entry.templateLabel) parts.push(entry.templateLabel);
+            parts.push(fmtDateTime(entry.startedAt) + ' 開始');
+            var count = (entry.segments || []).length;
+            if (count) parts.push('録音 ' + count + ' 回 / 計 ' + fmtMs(totalRecorded(entry)));
+            if (entry.output) parts.push('作成済み');
+            $('sessionMeta').textContent = parts.join(' ・ ');
+
+            if (templateChangedForSession) {
+                notice.textContent = '⚠️ 作成する文書を変えたため、次に録音を始めると' +
+                                     '新しいセッションになります（この内容は履歴に残ります）';
+                notice.classList.add('active');
+            } else if (sessionCompleted) {
+                notice.textContent = '✅ 作成済みです。次に録音を始めると新しい記録になります' +
+                                     '（続きを足すときは、履歴から「続きを録音」で開いてください）';
+                notice.classList.add('active');
+            } else {
+                notice.textContent = '';
+                notice.classList.remove('active');
+            }
+        }
+
+        // 作業領域を空にして、次は新しい 1 件として記録する
+        function clearWorkspace() {
+            hideAutoCountdown();
+            currentLogId = null;
+            pendingSegmentStart = 0;
+            templateChangedForSession = false;
+            sessionCompleted = false;
+            $('transcriptionText').value = '';
+            $('interimText').textContent = '';
+            $('notes').value = '';
+            $('outputText').textContent = '';
+            $('outputSection').classList.remove('active');
+            discardDraft();
+            updateSessionBar();
+            renderLog();
+        }
+
+        // 作業中のセッションを閉じて、次は新しい 1 件として記録する
+        function startNewSession() {
+            if (wantRecording) stopRecording(false);
+            clearWorkspace();
+            clearError();
+            showSuccess('新しいセッションを始めます');
+            $('recordBtn').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        /* ------------------------------------------------------------------
+         * 履歴の表示
+         * ---------------------------------------------------------------- */
+        function fmtDateTime(ms) {
+            var d = new Date(ms);
+            var p2 = function (v) { return ('0' + v).slice(-2); };
+            return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' +
+                   p2(d.getHours()) + ':' + p2(d.getMinutes());
+        }
+
+        function addLogField(parent, label, text) {
+            if (!text) return;
+            var wrap = document.createElement('div');
+            wrap.className = 'log-field';
+            var h = document.createElement('h4');
+            h.textContent = label;
+            var pre = document.createElement('pre');
+            pre.textContent = text;
+            wrap.appendChild(h);
+            wrap.appendChild(pre);
+            parent.appendChild(wrap);
+        }
+
+        function renderLog() {
+            var list = loadLog();
+            var host = $('logList');
+            host.textContent = '';
+
+            $('logTitle').textContent = '🕘 履歴' + (list.length ? '（' + list.length + ' 件）' : '');
+            $('logBulkActions').style.display = list.length ? '' : 'none';
+
+            if (!list.length) {
+                $('logEmpty').textContent = prefs.retentionDays
+                    ? '履歴はまだありません。録音を始めると、開始時刻とともにここへ記録されます。'
+                    : '履歴の保存は「保存しない」に設定されています。設定から変更できます。';
+                return;
+            }
+            $('logEmpty').textContent = '';
+
+            for (var i = 0; i < list.length; i++) {
+                host.appendChild(buildLogItem(list[i]));
+            }
+        }
+
+        function buildLogItem(entry) {
+            var item = document.createElement('details');
+            item.className = 'log-item';
+
+            var summary = document.createElement('summary');
+            var when = document.createElement('div');
+            when.className = 'log-when';
+
+            var time = document.createElement('span');
+            time.className = 'log-time';
+            time.textContent = fmtDateTime(entry.startedAt);
+            when.appendChild(time);
+
+            var ms = totalRecorded(entry);
+            if (ms) {
+                var d = document.createElement('span');
+                var count = (entry.segments || []).length;
+                d.textContent = '録音 ' + fmtMs(ms) + (count > 1 ? '（' + count + ' 回）' : '');
+                when.appendChild(d);
+            }
+
+            var tag = document.createElement('span');
+            tag.className = 'log-tag';
+            if (entry.output) { tag.className += ' done'; tag.textContent = entry.templateLabel || '作成済み'; }
+            else if (entry.error) { tag.className += ' failed'; tag.textContent = '生成に失敗'; }
+            else { tag.textContent = (entry.templateLabel || '') + '（未生成）'; }
+            when.appendChild(tag);
+
+            var title = document.createElement('div');
+            title.className = 'log-name';
+            title.textContent = entryTitle(entry) || '（題名なし）';
+
+            var head = document.createElement('div');
+            head.className = 'log-head';
+            var preview = (entry.output || entry.transcript || entry.notes || '').trim().replace(/\s+/g, ' ');
+            head.textContent = preview ? preview.slice(0, 50) + (preview.length > 50 ? '…' : '') : '（内容なし）';
+
+            summary.appendChild(when);
+            summary.appendChild(title);
+            summary.appendChild(head);
+            item.appendChild(summary);
+
+            if (entry.id === currentLogId) {
+                item.className += ' current';
+                var badge = document.createElement('span');
+                badge.className = 'log-tag done';
+                badge.textContent = '作業中';
+                when.insertBefore(badge, when.firstChild);
+            }
+
+            var body = document.createElement('div');
+            body.className = 'log-body';
+            addLogField(body, '書き起こし', entry.transcript);
+            addLogField(body, 'メモ', entry.notes);
+            addLogField(body, entry.templateLabel || '作成結果', entry.output);
+            addLogField(body, 'エラー', entry.error);
+
+            var actions = document.createElement('div');
+            actions.className = 'log-actions';
+
+            if (entry.output) {
+                if (navigator.share) actions.appendChild(logButton('📤 共有', 'btn-share', function () {
+                    navigator.share({ title: entry.templateLabel || '記録', text: entry.output })
+                        .catch(function (e) { if (!e || e.name !== 'AbortError') showError('共有できませんでした。'); });
+                }));
+                actions.appendChild(logButton('📋 コピー', 'btn-copy', function () {
+                    copyText(entry.output, '作成結果をコピーしました');
+                }));
+            }
+            actions.appendChild(logButton(
+                entry.id === currentLogId ? '↩︎ 読み直す' : '▶︎ 続きを録音',
+                'btn-primary', function () { restoreLogEntry(entry); }));
+            actions.appendChild(logButton('🗑 削除', 'btn-clear log-danger', function () { deleteLogEntry(entry.id); }));
+
+            body.appendChild(actions);
+            item.appendChild(body);
+            return item;
+        }
+
+        function logButton(label, cls, onClick) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = cls + ' btn-small';
+            b.textContent = label;
+            b.addEventListener('click', onClick);
+            return b;
+        }
+
+        // 履歴の内容を入力欄に戻す。別のテンプレートで作り直したいときに使う
+        function restoreLogEntry(entry) {
+            if (wantRecording) stopRecording(false);
+            hideAutoCountdown();
+            $('transcriptionText').value = entry.transcript || '';
+            $('notes').value = entry.notes || '';
+
+            // 保存されていた文書形式に戻す。不明な形式だった場合は既定に戻す
+            var restored = templateById(entry.template || '');
+            prefs.template = restored.id;
+            savePrefs();
+            applyTemplate();
+
+            currentLogId = entry.id;      // 以降の録音・生成は同じ 1 件に追記する
+            pendingSegmentStart = 0;
+            templateChangedForSession = false;   // 続きなので新規にはしない
+            sessionCompleted = false;            // 明示的に開いた続きなので書き足す
+            saveDraftNow();
+            updateSessionBar();
+            renderLog();
+            if (entry.output) {
+                $('outputText').textContent = entry.output;
+                $('outputSection').classList.add('active');
+            } else {
+                $('outputText').textContent = '';
+                $('outputSection').classList.remove('active');
+            }
+            showSuccess('「' + (entryTitle(entry) || '題名なし') + '」を' +
+                        currentTemplate().label + 'として開きました。' +
+                        '録音を始めると、この続きとして書き足されます');
+            $('recordBtn').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function exportLog() {
+            var list = loadLog();
+            if (!list.length) return;
+            var out = [];
+            for (var i = 0; i < list.length; i++) {
+                var e = list[i];
+                var lines = ['==== ' + (entryTitle(e) || '題名なし') + ' ====',
+                             fmtDateTime(e.startedAt) + ' 開始' +
+                             (e.templateLabel ? ' / ' + e.templateLabel : '')];
+                var ms = totalRecorded(e);
+                if (ms) {
+                    lines.push('録音時間: ' + fmtMs(ms) +
+                               ((e.segments || []).length > 1 ? '（' + e.segments.length + ' 回）' : ''));
+                }
+                if (e.generatedAt) lines.push('作成日時: ' + fmtDateTime(e.generatedAt));
+                if (e.transcript) lines.push('', '【書き起こし】', e.transcript);
+                if (e.notes) lines.push('', '【メモ】', e.notes);
+                if (e.output) lines.push('', '【作成結果】', e.output);
+                if (e.error) lines.push('', '【エラー】', e.error);
+                out.push(lines.join('\n'));
+            }
+            var text = out.join('\n\n');
+            if (navigator.share) {
+                navigator.share({ title: '履歴', text: text }).catch(function (e) {
+                    if (!e || e.name !== 'AbortError') copyText(text, '履歴をコピーしました');
+                });
+            } else {
+                copyText(text, '履歴をコピーしました');
+            }
+        }
+
+        /* ==================================================================
+         * F-05 診療録の生成
+         * ================================================================ */
+        var API_URL = 'https://api.anthropic.com/v1/messages';
+        var REQUEST_TIMEOUT_MS = 300000;
+        var generating = false;
+
+        function generateRecord() {
+            if (generating) return;
+            hideAutoCountdown();
+
+            var apiKey = currentApiKey();
+            if (!apiKey) {
+                showError(apiKeyMissingMessage());
+                $('settingsPanel').classList.add('active');
+                return;
+            }
+
+            var transcription = $('transcriptionText').value.trim();
+            if (!transcription) {
+                showError('音声を入力するか、書き起こし欄に直接入力してください');
+                return;
+            }
+
+            if (!navigator.onLine) {
+                var t = currentTemplate();
+                showError('オフラインのため' + t.noun + 'を作成できません。\n' +
+                          '通信が回復してから、もう一度「' + t.noun + 'を生成」を押してください。\n' +
+                          '入力内容はこの端末に保存されています。');
+                return;
+            }
+
+            if (wantRecording) stopRecording(false);
+            saveDraftNow();
+
+            var notes = $('notes').value.trim();
+            var tpl = currentTemplate();
+
+            generating = true;
+            $('generateBtn').disabled = true;
+            $('templateSelect').disabled = true;
+            setTemplateEditorEnabled(false);
+            showLoading(true);
+            clearError();
+
+            // 通信が固まったままにならないようタイムアウトを付ける
+            var controller = ('AbortController' in window) ? new AbortController() : null;
+            var timer = controller ? setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS) : null;
+
+            fetch(API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    // C-07: ブラウザから直接呼ぶために必須
+                    'anthropic-dangerous-direct-browser-access': 'true'
+                },
+                body: JSON.stringify({
+                    model: 'claude-opus-5',
+                    max_tokens: 4096,
+                    system: systemPromptFor(tpl.id),
+                    messages: [
+                        { role: 'user', content: getUserPrompt(tpl, transcription, notes) }
+                    ]
+                }),
+                signal: controller ? controller.signal : undefined
+            }).then(function (response) {
+                return response.text().then(function (raw) {
+                    var data = null;
+                    try { data = JSON.parse(raw); } catch (e) { /* HTML エラーページ等 */ }
+                    if (!response.ok) {
+                        var message = (data && data.error && data.error.message) ||
+                                      ('API エラー: ' + response.status);
+                        if (response.status === 401) {
+                            message = 'API キーが正しくありません（401）。設定を確認してください。';
+                        } else if (response.status === 429) {
+                            message = 'リクエストが集中しています（429）。しばらく待ってから再度お試しください。';
+                        } else if (response.status >= 500) {
+                            message = 'Claude 側で一時的な障害が起きています（' + response.status + '）。\n' +
+                                      '時間をおいて、もう一度お試しください。';
+                        }
+                        throw new Error(message);
+                    }
+                    if (!data) throw new Error('API の応答を解析できませんでした');
+                    return data;
+                });
+            }).then(function (data) {
+                if (data.stop_reason === 'refusal') {
+                    throw new Error('内容が安全性フィルタに該当したため、' + tpl.noun + 'を生成できませんでした。' +
+                                    '書き起こしの内容を確認してください。');
+                }
+                // Claude Opus 5 は既定で思考ブロックを返すため、
+                // content[0] 決め打ちではなくテキストブロックだけを取り出す
+                var result = (data.content || [])
+                    .filter(function (block) { return block.type === 'text'; })
+                    .map(function (block) { return block.text; })
+                    .join('')
+                    .trim();
+
+                if (!result) throw new Error(tpl.noun + 'の本文を取得できませんでした。もう一度お試しください。');
+
+                prefs.usedBefore = true;
+                savePrefs();
+                displayOutput(result);
+                sessionCompleted = true;      // 次の録音は新しい記録として始める
+                logSnapshot({ output: result, error: '', generatedAt: Date.now() });
+                updateSessionBar();
+                // 追記して作り直した場合も題名を付け直す
+                requestTitle(currentLogId, transcription, notes);
+
+                if (data.stop_reason === 'max_tokens') {
+                    showError('出力が途中で打ち切られました。書き起こしを短くして再度お試しください。');
+                } else {
+                    showSuccess(tpl.noun + 'を生成しました');
+                }
+            }).catch(function (error) {
+                if (error && error.name === 'AbortError') {
+                    showError('時間内に応答がありませんでした。通信環境を確認して、もう一度お試しください。');
+                } else if (error instanceof TypeError) {
+                    // fetch 自体が失敗（オフライン / 接続不可 / CORS）
+                    showError('Claude API に接続できませんでした。\n' +
+                              '・インターネットに接続されているか\n' +
+                              '・このページが HTTPS で開かれているか\n' +
+                              'を確認してください。入力内容は保存されています。');
+                } else {
+                    showError(error && error.message ? error.message : '不明なエラーが発生しました');
+                }
+                logSnapshot({ error: (error && error.message) || '生成に失敗しました' });
+            }).then(function () {
+                if (timer) clearTimeout(timer);
+                generating = false;
+                $('generateBtn').disabled = false;
+                $('templateSelect').disabled = false;
+                setTemplateEditorEnabled(true);
+                showLoading(false);
+            });
+        }
+
+        /* ==================================================================
+         * テンプレート
+         *
+         * 文書の種類ごとに、役割・項目の説明・固有の制約・出力形式を持つ。
+         * 共通の制約（記載外の情報を足さない、薬剤名を変換しない等）は
+         * COMMON_RULES にまとめ、全テンプレートに必ず付ける。
+         * ================================================================ */
+        var COMMON_RULES = [
+            '推論過程は出力しません',
+            '出力はプレーンテキストのみとし、本文以外の前置きや解説を付けません',
+            '書き起こしや補足メモに記載されていない情報を加筆しません',
+            '該当する情報が無い項目は「記載なし」と書きます。推測で埋めません',
+            '薬剤名に対する意味的変換・補完・訂正は禁止します（フォシーガ→ダパグリフロジンなどの変換は厳禁）',
+            '数値（体温・血圧・投与量・日付など）は書き起こしのとおりに転記します',
+            '明らかな聞き取りミスや誤変換は、文脈に基づいて訂正します',
+            '一般用語は可能な限り専門用語へ変換します',
+            '項目間で同じ情報を重複させません',
+            '完成前に内容の齟齬・漏れを最終確認します'
+        ];
+
+        var TEMPLATES = [
+            {
+                id: 'soap',
+                label: '診療録（SOAP）',
+                noun: '診療録',
+                hint: '医師と患者のやり取りから SOAP 形式の診療録を作成します。',
+                notesTitle: '📝 診察メモ（オプション）',
+                notesPlaceholder: '診察時のメモを追加（あれば入力してください）',
+                transcriptHint: '診察時の医師と患者の会話を録音してください。',
+                role: 'あなたは診療録作成を担当する「医師事務作業補助者（シュライバー）」です。',
+                source: '医師-患者の「書き起こし（トランスクリプト）」および任意で提供される「診察メモ」',
+                guide: 'SOAPの各項目の説明：\n' +
+                       'S：患者の「主観的な」経験、個人的な見解、感情から作成。患者の訴え。\n' +
+                       'O：医師による客観的な情報。バイタルサイン、身体診察所見、検査結果など。患者の訴えは含まない。\n' +
+                       'A：医師の立場から判断した患者の状態についての評価。\n' +
+                       'P：患者の今後の追加検査予定、治療方針・計画、患者教育に関する情報。',
+                extra: [
+                    '一行目は「＜S＞：」から始まります',
+                    '「医師」「患者」という語は出力に使いません'
+                ],
+                format: '＜S＞：\n＜O＞：\n＜A＞：\n＜P＞：'
+            },
+            {
+                id: 'nursing',
+                label: '看護記録（フォーカスチャーティング）',
+                noun: '看護記録',
+                hint: 'フォーカスチャーティング（DAR）形式で記録します。',
+                notesTitle: '📝 補足メモ（オプション）',
+                notesPlaceholder: 'バイタルサインや処置の内容など（あれば入力してください）',
+                transcriptHint: '観察したこと、実施したケア、患者さんの反応を話してください。',
+                role: 'あなたは看護記録の作成を担当する看護補助者です。',
+                source: '看護場面の「書き起こし（トランスクリプト）」および任意で提供される「補足メモ」',
+                guide: '各項目の説明：\n' +
+                       'フォーカス：その記録が焦点を当てている患者の問題・症状・出来事を短く示す。\n' +
+                       'D（データ）：フォーカスを裏づける主観的情報（患者の訴え）と客観的情報（観察・測定値）。\n' +
+                       'A（アクション）：それに対して実施した看護ケア・処置・報告。\n' +
+                       'R（レスポンス）：ケアに対する患者の反応と結果。実施していない場合や反応が未確認の場合は「記載なし」。',
+                extra: [
+                    '一行目は「＜フォーカス＞：」から始まります',
+                    '評価や判断を D に混ぜず、観察された事実のみを D に書きます',
+                    '実施していないケアを A に書きません'
+                ],
+                format: '＜フォーカス＞：\n＜D（データ）＞：\n＜A（アクション）＞：\n＜R（レスポンス）＞：'
+            },
+            {
+                id: 'assessment',
+                label: '問診（医療面接）',
+                noun: '問診記録',
+                hint: '主訴・現病歴・既往歴などを整理した問診記録を作成します。',
+                notesTitle: '📝 補足メモ（オプション）',
+                notesPlaceholder: '問診票の内容など（あれば入力してください）',
+                transcriptHint: '問診のやり取りを録音してください。',
+                role: 'あなたは医療面接の記録を担当する医師事務作業補助者です。',
+                source: '問診の「書き起こし（トランスクリプト）」および任意で提供される「補足メモ」',
+                guide: '各項目の説明：\n' +
+                       '主訴：受診の理由を患者の言葉に近い形で簡潔に。\n' +
+                       '現病歴：発症時期、経過、症状の性状・部位・程度、増悪／寛解因子、随伴症状を時系列で。\n' +
+                       '既往歴：過去の疾患・手術・入院。\n' +
+                       '内服薬：現在服用中の薬剤。名称は書き起こしのとおりに。\n' +
+                       'アレルギー：薬剤・食物などのアレルギー歴。無いと明言された場合は「なし」。\n' +
+                       '家族歴：血縁者の疾患。\n' +
+                       '生活歴：喫煙・飲酒・職業・生活状況。\n' +
+                       'その他の陽性所見・陰性所見：確認された症状の有無。',
+                extra: [
+                    '一行目は「＜主訴＞：」から始まります',
+                    '「無い」と明言された項目は「なし」と書き、話題に出なかった項目は「記載なし」と書いて区別します',
+                    '診断名や評価を書きません。聴取した事実のみを整理します'
+                ],
+                format: '＜主訴＞：\n＜現病歴＞：\n＜既往歴＞：\n＜内服薬＞：\n＜アレルギー＞：\n＜家族歴＞：\n＜生活歴＞：\n＜その他の陽性所見・陰性所見＞：'
+            },
+            {
+                id: 'careplan',
+                label: '看護計画書',
+                noun: '看護計画書',
+                hint: '看護問題と O-T-E（観察・援助・教育）計画を立案します。',
+                notesTitle: '📝 補足メモ（オプション）',
+                notesPlaceholder: '疾患名、ADL、既往など（あれば入力してください）',
+                transcriptHint: '患者さんの状態、抱えている問題、目標について話してください。',
+                role: 'あなたは看護計画の立案を補助する看護補助者です。',
+                source: '患者の状態に関する「書き起こし（トランスクリプト）」および任意で提供される「補足メモ」',
+                guide: '各項目の説明：\n' +
+                       '看護問題：患者が抱える看護上の問題を「＃1」のように番号を付けて挙げる。関連因子がわかる場合は「〜に関連した〜」の形で書く。\n' +
+                       'S / O：その問題を裏づける主観的データと客観的データ。\n' +
+                       '長期目標：退院時や一定期間後に到達したい状態。\n' +
+                       '短期目標：数日〜1週間程度で到達したい、観察可能な状態。\n' +
+                       'OP（観察計画）：継続して観察・測定する項目。\n' +
+                       'TP（援助計画）：看護師が実施するケア・援助。\n' +
+                       'EP（教育計画）：患者・家族への説明や指導。',
+                extra: [
+                    '一行目は「＃1」から始まります',
+                    '書き起こしから読み取れる看護問題のみを挙げます。一般論としての問題を追加しません',
+                    '目標は「〜できる」「〜が〜以下となる」のように、達成を確認できる書き方にします',
+                    '複数の看護問題がある場合は、＃1 の全項目を書いてから ＃2 に進みます'
+                ],
+                format: '＃1　（看護問題）\n＜S＞：\n＜O＞：\n＜長期目標＞：\n＜短期目標＞：\n＜OP＞：\n＜TP＞：\n＜EP＞：'
+            },
+            {
+                id: 'referral',
+                label: '紹介状（診療情報提供書）',
+                noun: '紹介状',
+                hint: '他院への診療情報提供書の本文を作成します。',
+                notesTitle: '📝 補足メモ（オプション）',
+                notesPlaceholder: '宛先の医療機関名、検査値、処方内容など（あれば入力してください）',
+                transcriptHint: '紹介先、紹介の目的、これまでの経過を話してください。',
+                role: 'あなたは診療情報提供書の作成を担当する医師事務作業補助者です。',
+                source: '医師の口述による「書き起こし（トランスクリプト）」および任意で提供される「補足メモ」',
+                guide: '各項目の説明：\n' +
+                       '紹介先：紹介先の医療機関名・診療科・医師名。\n' +
+                       '患者：氏名・年齢・性別。\n' +
+                       '傷病名：現在の診断名。\n' +
+                       '紹介目的：精査依頼、加療依頼、経過観察依頼などの目的を明確に。\n' +
+                       '既往歴・家族歴：関連するもの。\n' +
+                       '症状経過及び検査結果：発症から現在までの経過と、実施した検査の結果を時系列で。\n' +
+                       '現在の処方：薬剤名・用量・用法。名称は書き起こしのとおりに。\n' +
+                       '備考：申し送り事項。',
+                extra: [
+                    '一行目は「＜紹介先＞：」から始まります',
+                    '他院の医師が読む正式な文書です。丁寧体（です・ます）で記述します',
+                    '氏名・年齢・医療機関名などが話に出ていない場合は、絶対に創作せず「記載なし」と書きます',
+                    '末尾に「ご高診のほどよろしくお願い申し上げます。」を置きます'
+                ],
+                format: '＜紹介先＞：\n＜患者＞：\n＜傷病名＞：\n＜紹介目的＞：\n＜既往歴・家族歴＞：\n＜症状経過及び検査結果＞：\n＜現在の処方＞：\n＜備考＞：'
+            },
+            {
+                id: 'minutes',
+                label: '議事録',
+                noun: '議事録',
+                hint: '会議の記録を、決定事項とToDoを中心に整理します。',
+                notesTitle: '📝 補足メモ（オプション）',
+                notesPlaceholder: '会議名、日時、出席者など（あれば入力してください）',
+                transcriptHint: '会議の音声を録音してください。',
+                role: 'あなたは会議の議事録作成を担当する書記です。',
+                source: '会議の「書き起こし（トランスクリプト）」および任意で提供される「補足メモ」',
+                guide: '各項目の説明：\n' +
+                       '会議名・日時・出席者：話に出た範囲で記載する。\n' +
+                       '議題：話し合われたテーマを箇条書きで。\n' +
+                       '決定事項：合意・決定された内容。決定に至っていないものは含めない。\n' +
+                       '検討内容：議題ごとに、誰がどのような意見を述べ、どう議論が進んだかの要点。\n' +
+                       '未決事項：結論が出ず持ち越しになった事項。\n' +
+                       'ToDo：担当者と期限が分かる形で。担当や期限が話に出ていない場合は「担当未定」「期限未定」と書く。',
+                extra: [
+                    '一行目は「＜会議名＞：」から始まります',
+                    '発言をそのまま書き写さず、要点に整理します',
+                    '決定事項と検討中の意見を明確に区別します。決まっていないことを決定事項に書きません',
+                    '発言者は書き起こしで判別できる場合のみ記載します。推測で名前を割り当てません'
+                ],
+                format: '＜会議名＞：\n＜日時＞：\n＜出席者＞：\n＜議題＞：\n＜決定事項＞：\n＜検討内容＞：\n＜未決事項＞：\n＜ToDo＞：'
+            }
+        ];
+
+        function baseTemplateById(id) {
+            for (var i = 0; i < TEMPLATES.length; i++) {
+                if (TEMPLATES[i].id === id) return TEMPLATES[i];
+            }
+            return TEMPLATES[0];
+        }
+
+        /* ------------------------------------------------------------------
+         * F-19 テンプレートの編集
+         *
+         * 指示は 1 つの文章としてまとめて編集する。書き換えた文書の指示だけを
+         * mv.templates に持ち、既定の指示の代わりに使う。
+         *
+         * 共通の制約（COMMON_RULES）は消されても送信時に必ず付け直す。
+         * ---------------------------------------------------------------- */
+        var tplOverrides = {};      // { テンプレート id: 指示の全文 }
+
+        function loadTemplateOverrides() {
+            tplOverrides = {};
+            var raw = storage.get(KEY_TPL);
+            if (!raw) return;
+            var migrated = false;
+            try {
+                var saved = JSON.parse(raw);
+                if (!saved || typeof saved !== 'object') return;
+                for (var i = 0; i < TEMPLATES.length; i++) {
+                    var id = TEMPLATES[i].id;
+                    var o = saved[id];
+                    if (!o || typeof o !== 'object') continue;
+
+                    if (typeof o.prompt === 'string' && o.prompt.trim()) {
+                        tplOverrides[id] = o.prompt;
+                        continue;
+                    }
+                    // 項目ごとに分かれていた古い保存形式を、指示の全文に移し替える
+                    var old = migrateOldOverride(TEMPLATES[i], o);
+                    if (old) { tplOverrides[id] = old; migrated = true; }
+                }
+            } catch (e) {
+                // 壊れていたら既定の指示で動かす
+                storage.remove(KEY_TPL);
+                tplOverrides = {};
+                return;
+            }
+            if (migrated) saveTemplateOverrides();
+        }
+
+        // 旧版（役割・項目の説明・制約・出力形式の 4 欄）の保存内容を 1 つの文章にする
+        function migrateOldOverride(base, o) {
+            var t = {}, k, any = false;
+            for (k in base) if (Object.prototype.hasOwnProperty.call(base, k)) t[k] = base[k];
+            if (typeof o.role === 'string' && o.role.trim())     { t.role = o.role; any = true; }
+            if (typeof o.guide === 'string' && o.guide.trim())   { t.guide = o.guide; any = true; }
+            if (typeof o.format === 'string' && o.format.trim()) { t.format = o.format; any = true; }
+            if (Object.prototype.toString.call(o.extra) === '[object Array]') {
+                t.extra = cleanLines(o.extra.join('\n'));
+                any = true;
+            }
+            return any ? buildPrompt(t) : '';
+        }
+
+        function saveTemplateOverrides() {
+            var out = {}, any = false;
+            for (var id in tplOverrides) {
+                if (Object.prototype.hasOwnProperty.call(tplOverrides, id)) {
+                    out[id] = { prompt: tplOverrides[id] };
+                    any = true;
+                }
+            }
+            if (!any) { storage.remove(KEY_TPL); return true; }
+            return storage.set(KEY_TPL, JSON.stringify(out));
+        }
+
+        function cleanLines(text) {
+            var raw = String(text || '').split('\n'), out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var s = raw[i].trim();
+                if (s) out.push(s);
+            }
+            return out;
+        }
+
+        function isTemplateEdited(id) {
+            return Object.prototype.hasOwnProperty.call(tplOverrides, id);
+        }
+
+        /* ------------------------------------------------------------------
+         * F-20 用語集
+         *
+         * 認識エンジン（iOS 側）そのものは変えられないので、聞き取りの誤りを
+         * 後から直す。1 行に 1 語。「まちがい→ただしい」と書くと置き換える。
+         * ---------------------------------------------------------------- */
+        var GLOSSARY_MAX_TERMS = 200;
+        var glossaryCache = null;
+        var glossarySource = null;
+
+        function glossary() {
+            if (glossaryCache && glossarySource === prefs.glossary) return glossaryCache;
+            var lines = cleanLines(prefs.glossary), terms = [], fixes = [];
+            for (var i = 0; i < lines.length && terms.length < GLOSSARY_MAX_TERMS; i++) {
+                var parts = lines[i].split(/\s*(?:→|=>|＝|=|＞|>)\s*/);
+                var from = (parts[0] || '').trim();
+                var to = (parts[1] || '').trim();
+                if (from && to) {
+                    fixes.push({ from: from, to: to });
+                    if (terms.indexOf(to) < 0) terms.push(to);
+                } else if (from && terms.indexOf(from) < 0) {
+                    terms.push(from);
+                }
+            }
+            glossarySource = prefs.glossary;
+            glossaryCache = { terms: terms, fixes: fixes };
+            return glossaryCache;
+        }
+
+        function escapeForRegExp(text) {
+            return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        // 「まちがい→ただしい」の置き換えを書き起こしに適用する
+        function applyGlossaryFixes(text) {
+            var fixes = glossary().fixes;
+            for (var i = 0; i < fixes.length; i++) {
+                if (!fixes[i].from) continue;
+                text = text.replace(new RegExp(escapeForRegExp(fixes[i].from), 'g'), fixes[i].to);
+            }
+            return text;
+        }
+
+        function hasGlossaryTerm(text) {
+            var terms = glossary().terms;
+            for (var i = 0; i < terms.length; i++) {
+                if (text.indexOf(terms[i]) >= 0) return true;
+            }
+            return false;
+        }
+
+        // 認識の候補のうち、用語集の語をそのまま含むものがあれば優先する
+        function pickAlternative(result) {
+            var top = (result[0] && result[0].transcript) || '';
+            if (!result.length || result.length < 2) return top;
+            if (!glossary().terms.length) return top;
+            if (hasGlossaryTerm(applyGlossaryFixes(top))) return top;
+            for (var i = 1; i < result.length; i++) {
+                var alt = (result[i] && result[i].transcript) || '';
+                if (alt && hasGlossaryTerm(applyGlossaryFixes(alt))) return alt;
+            }
+            return top;
+        }
+
+        function templateById(id) { return baseTemplateById(id); }
+
+        function currentTemplate() { return templateById(prefs.template); }
+
+        // 既定の指示を組み立てる（編集していないときはこれがそのまま送られる）
+        function buildPrompt(t) {
+            var rules = COMMON_RULES.concat(t.extra || []);
+            var lines = [];
+            for (var i = 0; i < rules.length; i++) lines.push('- ' + rules[i]);
+
+            return t.role + '\n\n' +
+                   t.source + 'から、' + t.noun + 'を作成してください。\n\n' +
+                   t.guide + '\n\n' +
+                   '制約：\n' + lines.join('\n') + '\n\n' +
+                   '出力形式：\n' + t.format;
+        }
+
+        function defaultPrompt(id) { return buildPrompt(baseTemplateById(id)); }
+
+        // 編集で消えた共通の制約を探す
+        function missingCommonRules(text) {
+            var out = [];
+            for (var i = 0; i < COMMON_RULES.length; i++) {
+                if (String(text || '').indexOf(COMMON_RULES[i]) < 0) out.push(COMMON_RULES[i]);
+            }
+            return out;
+        }
+
+        // 消された共通の制約は末尾に付け直す。安全側の制約は必ず送る
+        function withCommonRules(text) {
+            var missing = missingCommonRules(text);
+            if (!missing.length) return text;
+            return text + '\n\n必ず守る制約：\n- ' + missing.join('\n- ');
+        }
+
+        // 実際に送る指示。編集があればそれを、無ければ既定を使う
+        function systemPromptFor(id) {
+            var base = baseTemplateById(id);
+            var text = isTemplateEdited(base.id) ? tplOverrides[base.id] : defaultPrompt(base.id);
+            return withCommonRules(text);
+        }
+
+        function getUserPrompt(t, transcription, notes) {
+            var prompt = '以下の書き起こしから、' + t.noun + 'を作成してください。\n\n' +
+                         '【書き起こし】\n' + transcription;
+            if (notes) prompt += '\n\n【補足メモ】\n' + notes;
+
+            // 用語集は指示ではなく資料として添える（テンプレートの指示とは独立）
+            var terms = glossary().terms;
+            if (terms.length) {
+                prompt += '\n\n【この施設でよく使う語】\n' + terms.join('\n') +
+                          '\n\n書き起こしに、上の語の聞き取り間違いと考えられる箇所があれば、' +
+                          'この表記に直してください。' +
+                          '音が似ていない語を当てはめたり、書かれていない語を足したりはしません。' +
+                          '薬剤名の意味的な変換（先発名と一般名の言い換えなど）は、この場合も禁止です。';
+            }
+            prompt += '\n\n' + t.noun + 'を作成してください。';
+            return prompt;
+        }
+
+        /* ------------------------------------------------------------------
+         * 選択に合わせて画面の文言を差し替える
+         * ---------------------------------------------------------------- */
+        function buildTemplateOptions() {
+            var sel = $('templateSelect');
+            for (var i = 0; i < TEMPLATES.length; i++) {
+                var opt = document.createElement('option');
+                opt.value = TEMPLATES[i].id;
+                opt.textContent = TEMPLATES[i].label;
+                sel.appendChild(opt);
+            }
+        }
+
+        function applyTemplate() {
+            var t = currentTemplate();
+            $('templateSelect').value = t.id;
+            $('templateHint').textContent = t.hint;
+            $('transcriptHint').textContent = t.transcriptHint;
+            $('notesTitle').textContent = t.notesTitle;
+            $('notes').placeholder = t.notesPlaceholder;
+            $('generateBtn').textContent = '✨ ' + t.noun + 'を生成';
+            $('loadingLabel').textContent = t.noun + 'を作成中...';
+            $('outputTitle').textContent = '✅ 作成された' + t.noun;
+            $('templateEdited').textContent = isTemplateEdited(t.id) ? '✏️ 指示を編集済み' : '';
+        }
+
+        /* ------------------------------------------------------------------
+         * F-19 テンプレートの編集（画面）
+         * ---------------------------------------------------------------- */
+        var tplEditingId = null;    // 編集欄にいま読み込んでいるテンプレート
+        var tplDirty = false;       // 保存していない書き換えがあるか
+
+        function fillTemplateEditor() {
+            var base = baseTemplateById(prefs.template);
+            tplEditingId = base.id;
+            tplDirty = false;
+            $('tplEditorTitle').textContent = base.label;
+            $('tplPrompt').value = isTemplateEdited(base.id) ? tplOverrides[base.id] : defaultPrompt(base.id);
+            $('tplCommonRules').textContent = '- ' + COMMON_RULES.join('\n- ');
+            updateTemplatePreview();
+        }
+
+        // いま編集欄に入っている内容で、実際に送られる指示を見せる
+        function updateTemplatePreview() {
+            var text = promptFromEditor();
+            $('tplPreview').textContent = withCommonRules(text);
+
+            var missing = missingCommonRules(text);
+            var warn = $('tplMissing');
+            if (missing.length) {
+                warn.textContent = '⚠️ 次の共通の制約が指示から消えています。' +
+                                   '送信時に末尾へ自動で付け直します。\n- ' + missing.join('\n- ');
+                warn.classList.add('active');
+            } else {
+                warn.textContent = '';
+                warn.classList.remove('active');
+            }
+        }
+
+        // 空欄なら既定の指示に戻す
+        function promptFromEditor() {
+            var id = tplEditingId || prefs.template;
+            return $('tplPrompt').value.trim() ? $('tplPrompt').value : defaultPrompt(id);
+        }
+
+        function toggleTemplateEditor() {
+            var open = $('templateEditor').classList.toggle('active');
+            $('templateEditToggle').textContent = open ? '閉じる' : '✏️ 指示を編集';
+            if (open) {
+                fillTemplateEditor();
+                $('templateEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+
+        // 生成中は指示を触らせない（送信済みの指示と画面がずれないように）
+        function setTemplateEditorEnabled(on) {
+            $('templateEditToggle').disabled = !on;
+            $('tplSaveBtn').disabled = !on;
+            $('tplResetBtn').disabled = !on;
+            $('tplPrompt').disabled = !on;
+        }
+
+        function saveTemplateEditor() {
+            var base = baseTemplateById(tplEditingId || prefs.template);
+            var text = promptFromEditor();
+            var changed = text !== defaultPrompt(base.id);
+
+            var before = tplOverrides[base.id];
+            if (changed) tplOverrides[base.id] = text;
+            else delete tplOverrides[base.id];
+
+            if (!saveTemplateOverrides()) {
+                // 保存できなければ元に戻す（画面と保存内容がずれないように）
+                if (before !== undefined) tplOverrides[base.id] = before; else delete tplOverrides[base.id];
+                saveTemplateOverrides();
+                showError('この端末では指示を保存できません（保存領域がいっぱいか、プライベートブラウズの可能性があります）。');
+                return;
+            }
+            clearError();
+            applyTemplate();
+            fillTemplateEditor();
+            showSuccess(changed ? base.label + 'の指示を保存しました'
+                                : base.label + 'の指示を既定に戻しました');
+        }
+
+        function resetTemplateEditor() {
+            var base = baseTemplateById(tplEditingId || prefs.template);
+            if (!isTemplateEdited(base.id) && !tplDirty) {
+                showSuccess(base.label + 'は既定の指示のままです');
+                return;
+            }
+            if (!window.confirm(base.label + 'の指示を既定に戻します。\n編集した内容は失われます。\n\nよろしいですか？')) return;
+            delete tplOverrides[base.id];
+            saveTemplateOverrides();
+            clearError();
+            applyTemplate();
+            fillTemplateEditor();
+            showSuccess(base.label + 'の指示を既定に戻しました');
+        }
+
+        // 利用者が選択を変えたときだけ呼ばれる（applyTemplate では change は起きない）
+        function onTemplateChange() {
+            // 編集中の内容を黙って捨てない
+            if (tplDirty && $('templateEditor').classList.contains('active')) {
+                if (!window.confirm('指示の編集内容が保存されていません。\n破棄して別の文書に切り替えますか？')) {
+                    $('templateSelect').value = tplEditingId;
+                    return;
+                }
+            }
+            prefs.template = $('templateSelect').value;
+            savePrefs();
+            cancelAutoGenerate();
+            applyTemplate();
+            if ($('templateEditor').classList.contains('active')) fillTemplateEditor();
+
+            // 別の文書を作るということなので、次の録音は新しいセッションにする。
+            // ここでは消さず、録音を始める時点で切り替える（誤操作で内容を失わないため）
+            if (currentLogId || workspaceHasContent()) {
+                templateChangedForSession = true;
+                updateSessionBar();
+            }
+        }
+
+        function displayOutput(text) {
+            $('outputText').textContent = text;
+            $('outputSection').classList.add('active');
+            $('outputSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        /* ==================================================================
+         * F-06 出力の受け渡し
+         * ================================================================ */
+        function shareRecord() {
+            var text = $('outputText').textContent;
+            if (!text || !navigator.share) return;
+            navigator.share({ title: currentTemplate().noun, text: text }).catch(function (e) {
+                // 利用者が共有シートを閉じただけの場合は何も出さない
+                if (e && e.name === 'AbortError') return;
+                showError('共有できませんでした。「コピー」をお試しください。');
+            });
+        }
+
+        function copyToClipboard() {
+            copyText($('outputText').textContent, currentTemplate().noun + 'をコピーしました');
+        }
+
+        function copyText(text, doneMessage) {
+            if (!text) return;
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function () {
+                    showSuccess(doneMessage);
+                }).catch(function () { legacyCopy(text, doneMessage); });
+            } else {
+                legacyCopy(text, doneMessage);
+            }
+        }
+
+        function legacyCopy(text, doneMessage) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.top = '0';
+            ta.style.left = '0';
+            ta.style.width = '1px';
+            ta.style.height = '1px';
+            ta.style.opacity = '0';
+            ta.setAttribute('readonly', '');
+            document.body.appendChild(ta);
+
+            var ok = false;
+            try {
+                if (isIOS) {
+                    // iOS は readOnly / 非編集要素の選択をコピーさせないため一時的に編集可にする
+                    ta.contentEditable = 'true';
+                    ta.readOnly = false;
+                    var range = document.createRange();
+                    range.selectNodeContents(ta);
+                    var sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    ta.setSelectionRange(0, text.length);
+                } else {
+                    ta.select();
+                }
+                ok = document.execCommand('copy');
+            } catch (e) {
+                ok = false;
+            }
+            document.body.removeChild(ta);
+
+            if (ok) {
+                showSuccess(doneMessage || 'コピーしました');
+            } else {
+                showError('自動コピーができませんでした。本文を長押しして「コピー」を選択してください。');
+            }
+        }
+
+        /* ------------------------------------------------------------------
+         * F-11 データの破棄
+         * ---------------------------------------------------------------- */
+        function resetForm() {
+            if (wantRecording) stopRecording(false);
+            hideAutoCountdown();
+            $('transcriptionText').value = '';
+            $('interimText').textContent = '';
+            $('notes').value = '';
+            $('outputText').textContent = '';
+            $('outputSection').classList.remove('active');
+            discardDraft();
+            currentLogId = null;
+            pendingSegmentStart = 0;
+            templateChangedForSession = false;
+            sessionCompleted = false;
+            updateSessionBar();
+            renderLog();
+            clearError();
+            showSuccess('入力内容と' + currentTemplate().noun + 'を破棄しました（履歴は残ります）');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        /* ==================================================================
+         * 表示ユーティリティ
+         * ================================================================ */
+        function showError(message) {
+            var host = $('errorMessage');
+            host.textContent = '';
+            if (!message) return;
+            var box = document.createElement('div');
+            box.className = 'error-message';
+            box.textContent = message;   // API のエラー文をそのまま HTML にしない
+            host.appendChild(box);
+        }
+
+        var successTimer = null;
+        function showSuccess(message) {
+            var host = $('successMessage');
+            host.textContent = '';
+            if (!message) return;
+            var box = document.createElement('div');
+            box.className = 'success-message';
+            box.textContent = message;
+            host.appendChild(box);
+            clearTimeout(successTimer);
+            successTimer = setTimeout(function () { host.textContent = ''; }, 3000);
+        }
+
+        function clearError() { $('errorMessage').textContent = ''; }
+
+        function showLoading(show) {
+            $('loadingIndicator').style.display = show ? 'flex' : 'none';
+        }
+
+        /* ==================================================================
+         * F-08 オフライン起動 / 10.3 更新の通知
+         * ================================================================ */
+        function registerServiceWorker() {
+            if (!('serviceWorker' in navigator)) return;
+            if (location.protocol === 'file:') return;
+
+            navigator.serviceWorker.register('./sw.js').then(function (reg) {
+                reg.addEventListener('updatefound', function () {
+                    var incoming = reg.installing;
+                    if (!incoming) return;
+                    incoming.addEventListener('statechange', function () {
+                        // 既に動いている版がある場合だけ「更新があります」を出す
+                        if (incoming.state === 'installed' && navigator.serviceWorker.controller) {
+                            waitingWorker = incoming;
+                            $('updateBanner').classList.add('active');
+                        }
+                    });
+                });
+            }).catch(function () { /* 登録できなくてもアプリは動く */ });
+
+            navigator.serviceWorker.addEventListener('controllerchange', function () {
+                // 初回登録でも clients.claim() でここに来る。
+                // 利用者が「再読み込み」を押したときだけ読み直す
+                // （そうしないと初回訪問で入力中に勝手にリロードされる）
+                if (!updateAccepted || reloading) return;
+                reloading = true;
+                location.reload();
+            });
+        }
+
+        var waitingWorker = null;
+        var updateAccepted = false;
+        var reloading = false;
+
+        function applyUpdate() {
+            saveDraftNow();
+            updateAccepted = true;
+            if (waitingWorker) waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+            else location.reload();
+        }
+
+        /* ------------------------------------------------------------------
+         * F-09 ホーム画面追加の案内
+         * ---------------------------------------------------------------- */
+        function maybeShowInstallHint() {
+            if (prefs.hideInstallHint) return;
+            if (isStandalone) return;              // 既にアプリとして起動している
+            if (!isIOS || isIOSNonSafari) return;  // 案内どおりの操作ができるのは iOS Safari のみ
+            $('installBanner').classList.add('active');
+        }
+
+        function dismissInstallHint() {
+            prefs.hideInstallHint = true;
+            savePrefs();
+            $('installBanner').classList.remove('active');
+        }
+
+        /* ==================================================================
+         * 起動
+         *
+         * onclick 属性ではなく addEventListener で束ねる
+         * （iOS のアプリ内ブラウザでインライン onclick が無効化されることがある）
+         * ================================================================ */
+        function init() {
+            loadTemplateOverrides();
+            loadPrefs();
+            initSettings();
+            checkEnvironment();
+            checkDraft();
+            saveLog(loadLog());        // 期間を過ぎた履歴を起動時に掃除する
+            renderLog();
+            updateSessionBar();
+            maybeShowInstallHint();
+            registerServiceWorker();
+
+            if (navigator.share) $('shareBtn').style.display = '';
+
+            $('settingsToggle').addEventListener('click', toggleSettings);
+            $('saveSettingsBtn').addEventListener('click', saveSettings);
+            $('clearKeyBtn').addEventListener('click', clearApiKey);
+
+            $('autoGenerate').addEventListener('change', function () {
+                prefs.autoGenerate = this.checked;
+                savePrefs();
+                if (!this.checked) cancelAutoGenerate();
+            });
+
+            $('logToggle').addEventListener('click', function () {
+                var open = $('logPanel').classList.toggle('active');
+                this.textContent = open ? '▴' : '▾';
+                if (open) renderLog();
+            });
+            $('exportLogBtn').addEventListener('click', exportLog);
+            $('clearLogBtn').addEventListener('click', clearLog);
+
+            $('retention').addEventListener('change', function () {
+                prefs.retentionDays = parseInt(this.value, 10) || 0;
+                savePrefs();
+                saveLog(loadLog());
+                renderLog();
+                updateSessionBar();
+                showSuccess(prefs.retentionDays
+                    ? '履歴を ' + prefs.retentionDays + ' 日間保存します'
+                    : '履歴の保存をやめ、記録済みの履歴も削除しました');
+            });
+
+            var glossaryTimer = null;
+            $('glossary').addEventListener('input', function () {
+                clearTimeout(glossaryTimer);
+                var value = this.value;
+                glossaryTimer = setTimeout(function () {
+                    prefs.glossary = value;
+                    savePrefs();
+                    updateGlossaryCount();
+                }, 600);
+            });
+            $('glossary').addEventListener('blur', function () {
+                clearTimeout(glossaryTimer);
+                prefs.glossary = this.value;
+                savePrefs();
+                updateGlossaryCount();
+            });
+
+            $('showWaveform').addEventListener('change', function () {
+                prefs.showWaveform = this.checked;
+                savePrefs();
+                if (this.checked) {
+                    if (wantRecording) startWaveform();
+                } else {
+                    stopWaveform();
+                }
+            });
+
+            $('autoSaveDraft').addEventListener('change', function () {
+                prefs.autoSaveDraft = this.checked;
+                savePrefs();
+                if (this.checked) saveDraftNow();
+                else storage.remove(KEY_DRAFT);
+            });
+
+            $('templateSelect').addEventListener('change', onTemplateChange);
+            $('templateEditToggle').addEventListener('click', toggleTemplateEditor);
+            $('tplSaveBtn').addEventListener('click', saveTemplateEditor);
+            $('tplResetBtn').addEventListener('click', resetTemplateEditor);
+            $('tplPrompt').addEventListener('input', function () {
+                tplDirty = true;
+                updateTemplatePreview();
+            });
+            $('newSessionBtn').addEventListener('click', startNewSession);
+            $('recordBtn').addEventListener('click', toggleRecording);
+            $('cancelAutoBtn').addEventListener('click', function () { cancelAutoGenerate(true); });
+            $('transcriptionText').addEventListener('input', onEditInput);
+            $('notes').addEventListener('input', onEditInput);
+            $('generateBtn').addEventListener('click', generateRecord);
+            $('shareBtn').addEventListener('click', shareRecord);
+            $('copyBtn').addEventListener('click', copyToClipboard);
+            $('resetBtn').addEventListener('click', resetForm);
+
+            $('restoreDraftBtn').addEventListener('click', restoreDraft);
+            $('discardDraftBtn').addEventListener('click', discardDraft);
+            $('reloadBtn').addEventListener('click', applyUpdate);
+            $('dismissUpdateBtn').addEventListener('click', function () {
+                $('updateBanner').classList.remove('active');
+            });
+            $('dismissInstallBtn').addEventListener('click', dismissInstallHint);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
