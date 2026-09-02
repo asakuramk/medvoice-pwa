@@ -100,7 +100,7 @@
             margin-bottom: 8px;
         }
 
-        input[type="password"], textarea, select {
+        input[type="password"], input[type="text"], textarea, select {
             display: block;
             width: 100%;
             padding: 12px;
@@ -115,7 +115,7 @@
             appearance: none;
         }
 
-        input[type="password"]:focus, textarea:focus, select:focus {
+        input[type="password"]:focus, input[type="text"]:focus, textarea:focus, select:focus {
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
@@ -407,7 +407,23 @@
             margin-top: 10px;
         }
         .tpl-state { font-size: 13px; color: var(--primary); }
+        .tpl-bar-buttons { display: flex; gap: 8px; flex-shrink: 0; }
         .tpl-field { min-height: 340px; font-size: 16px; }
+        .tpl-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .tpl-actions button { margin-top: 0; }
+        /* 誤タップを避けるため、消す操作は他と離して右端に置く */
+        .tpl-actions button.tpl-danger { margin-left: auto; color: var(--danger); }
+        .tpl-hidden-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            font-size: 14px;
+            border-bottom: 1px solid var(--gray-200);
+        }
+        .tpl-hidden-row:last-child { border-bottom: none; }
+        .tpl-hidden-row span { flex: 1 1 auto; }
+        .tpl-hidden-row button { margin-top: 0; flex: 0 0 auto; }
         .glossary-field { min-height: 120px; font-size: 16px; }
         .tpl-warn {
             display: none;
@@ -659,7 +675,10 @@
                 <p class="info-text" id="templateHint"></p>
                 <div class="tpl-bar">
                     <span class="tpl-state" id="templateEdited"></span>
-                    <button type="button" class="btn-clear btn-small" id="templateEditToggle">✏️ 指示を編集</button>
+                    <span class="tpl-bar-buttons">
+                        <button type="button" class="btn-clear btn-small" id="templateAddBtn">＋ 文書を追加</button>
+                        <button type="button" class="btn-clear btn-small" id="templateEditToggle">✏️ 指示を編集</button>
+                    </span>
                 </div>
             </div>
 
@@ -670,6 +689,20 @@
                     Claude への指示を、この端末だけで書き換えられます。
                     空欄にすると既定の指示に戻ります。
                 </p>
+
+                <div class="form-group" id="tplNameGroup">
+                    <label for="tplName">この文書の名前</label>
+                    <input type="text" id="tplName" maxlength="40" placeholder="例: 退院サマリー">
+                    <p class="info-text">「作成する文書」の一覧に出る名前です。</p>
+                </div>
+
+                <div class="form-group" id="tplNounGroup">
+                    <label for="tplNoun">画面での呼び方（任意）</label>
+                    <input type="text" id="tplNoun" maxlength="20" placeholder="例: サマリー">
+                    <p class="info-text">
+                        「◯◯を生成」「作成された◯◯」などに使います。空欄なら名前をそのまま使います。
+                    </p>
+                </div>
 
                 <div class="form-group">
                     <label for="tplPrompt">Claude への指示（全文）</label>
@@ -691,9 +724,17 @@
                     <pre class="tpl-preview" id="tplPreview"></pre>
                 </details>
 
-                <div class="button-group">
+                <details class="tpl-details" id="tplHiddenBox">
+                    <summary>一覧から外した文書（<span id="tplHiddenCount">0</span>）</summary>
+                    <div id="tplHiddenList"></div>
+                </details>
+
+                <div class="button-group tpl-actions">
                     <button type="button" class="btn-primary btn-small" id="tplSaveBtn">保存</button>
                     <button type="button" class="btn-clear btn-small" id="tplResetBtn">既定に戻す</button>
+                    <button type="button" class="btn-clear btn-small" id="tplCancelBtn">追加をやめる</button>
+                    <button type="button" class="btn-clear btn-small tpl-danger" id="tplHideBtn">一覧から外す</button>
+                    <button type="button" class="btn-clear btn-small tpl-danger" id="tplDeleteBtn">削除</button>
                 </div>
             </div>
         </div>
@@ -801,6 +842,7 @@
         var KEY_PREFS = 'mv.prefs';
         var KEY_LOG   = 'mv.log';
         var KEY_TPL   = 'mv.templates';
+        var KEY_UTPL  = 'mv.userTemplates';   // 自分で追加した文書と、一覧から外した文書
 
         var storage = {
             get: function (k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } },
@@ -830,8 +872,8 @@
                             if (!isNaN(num) && num >= 0) prefs[k] = num;
                         } else prefs[k] = !!saved[k];
                     }
-                    // 知らないテンプレート名が入っていたら既定に戻す
-                    if (templateById(prefs.template).id !== prefs.template) prefs.template = 'soap';
+                    // 知らないテンプレート名（削除した文書など）が入っていたら既定に戻す
+                    if (templateById(prefs.template).id !== prefs.template) prefs.template = firstVisibleTemplateId();
                 }
             } catch (e) { /* 壊れていたら既定値のまま */ }
         }
@@ -903,6 +945,8 @@
         function initSettings() {
             buildTemplateOptions();
             applyTemplate();
+            updateTemplateEditorMode();
+            renderHiddenTemplates();
             var savedApiKey = storage.get(KEY_API);
             if (savedApiKey) $('apiKey').value = savedApiKey;
 
@@ -2500,9 +2544,140 @@
             }
         ];
 
-        function baseTemplateById(id) {
+        /* ------------------------------------------------------------------
+         * F-21 文書の追加・削除
+         *
+         * 既定の 6 種類に加えて、利用者が自分で文書を足せる。追加した文書は
+         * 指示の全文をそのまま持ち、削除もできる。既定の文書は消せないが、
+         * 使わないものは一覧から外して隠せる（いつでも戻せる）。
+         * ---------------------------------------------------------------- */
+        var MAX_CUSTOM_TEMPLATES = 20;
+        var customTemplates = [];   // 自分で追加した文書
+        var hiddenTemplates = [];   // 一覧から外した既定の文書の id
+
+        function loadUserTemplates() {
+            customTemplates = [];
+            hiddenTemplates = [];
+            var raw = storage.get(KEY_UTPL);
+            if (!raw) return;
+            try {
+                var saved = JSON.parse(raw);
+                if (!saved || typeof saved !== 'object') return;
+                var list = isArray(saved.list) ? saved.list : [];
+                for (var i = 0; i < list.length && customTemplates.length < MAX_CUSTOM_TEMPLATES; i++) {
+                    var t = normalizeCustomTemplate(list[i]);
+                    // 既定と同じ id や重複は取り込まない
+                    if (!t || builtInById(t.id) || customById(t.id)) continue;
+                    customTemplates.push(t);
+                }
+                var hid = isArray(saved.hidden) ? saved.hidden : [];
+                for (var j = 0; j < hid.length; j++) {
+                    var id = String(hid[j] || '');
+                    if (builtInById(id) && hiddenTemplates.indexOf(id) < 0) hiddenTemplates.push(id);
+                }
+            } catch (e) {
+                // 壊れていたら既定の 6 種類だけで動かす
+                storage.remove(KEY_UTPL);
+                customTemplates = [];
+                hiddenTemplates = [];
+            }
+        }
+
+        function isArray(v) { return Object.prototype.toString.call(v) === '[object Array]'; }
+
+        // 保存された 1 件を、画面が必要とする項目を補って組み立てる
+        function normalizeCustomTemplate(o) {
+            if (!o || typeof o !== 'object') return null;
+            var id = String(o.id || '').trim();
+            var label = String(o.label || '').trim();
+            var prompt = String(o.prompt || '');
+            if (!id || !label || !prompt.trim()) return null;
+            return {
+                id: id,
+                label: label,
+                noun: String(o.noun || '').trim() || label,
+                custom: true,
+                prompt: prompt,
+                hint: '自分で追加した文書です。指示は「✏️ 指示を編集」で変えられます。',
+                notesTitle: '📝 補足メモ（オプション）',
+                notesPlaceholder: '補足があれば入力してください',
+                transcriptHint: '文書のもとになる内容を話してください。'
+            };
+        }
+
+        function saveUserTemplates() {
+            if (!customTemplates.length && !hiddenTemplates.length) {
+                storage.remove(KEY_UTPL);
+                return true;
+            }
+            var list = [];
+            for (var i = 0; i < customTemplates.length; i++) {
+                var t = customTemplates[i];
+                list.push({ id: t.id, label: t.label, noun: t.noun, prompt: t.prompt });
+            }
+            return storage.set(KEY_UTPL, JSON.stringify({ list: list, hidden: hiddenTemplates }));
+        }
+
+        function newTemplateId() {
+            var id;
+            do {
+                id = 'u-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
+            } while (builtInById(id) || customById(id));
+            return id;
+        }
+
+        function builtInById(id) {
             for (var i = 0; i < TEMPLATES.length; i++) {
                 if (TEMPLATES[i].id === id) return TEMPLATES[i];
+            }
+            return null;
+        }
+
+        function customById(id) {
+            for (var i = 0; i < customTemplates.length; i++) {
+                if (customTemplates[i].id === id) return customTemplates[i];
+            }
+            return null;
+        }
+
+        function customIndexOf(id) {
+            for (var i = 0; i < customTemplates.length; i++) {
+                if (customTemplates[i].id === id) return i;
+            }
+            return -1;
+        }
+
+        function isCustomTemplate(id) { return !!customById(id); }
+
+        function isHiddenTemplate(id) { return hiddenTemplates.indexOf(id) >= 0; }
+
+        function allTemplates() { return TEMPLATES.concat(customTemplates); }
+
+        // 一覧に出す文書。外していても、いま選んでいるものは必ず出す
+        function visibleTemplates() {
+            var all = allTemplates(), out = [];
+            for (var i = 0; i < all.length; i++) {
+                if (!isHiddenTemplate(all[i].id) || all[i].id === prefs.template) out.push(all[i]);
+            }
+            return out;
+        }
+
+        function visibleTemplateCount() {
+            var all = allTemplates(), n = 0;
+            for (var i = 0; i < all.length; i++) if (!isHiddenTemplate(all[i].id)) n++;
+            return n;
+        }
+
+        function firstVisibleTemplateId() {
+            var all = allTemplates();
+            for (var i = 0; i < all.length; i++) if (!isHiddenTemplate(all[i].id)) return all[i].id;
+            return TEMPLATES[0].id;
+        }
+
+        function baseTemplateById(id) {
+            var all = allTemplates();
+            for (var i = 0; i < all.length; i++) {
+                if (all[i].id === id) return all[i];
             }
             return TEMPLATES[0];
         }
@@ -2667,7 +2842,23 @@
                    '出力形式：\n' + t.format;
         }
 
-        function defaultPrompt(id) { return buildPrompt(baseTemplateById(id)); }
+        // 自作の文書は、書かれた指示そのものが既定になる
+        function defaultPrompt(id) {
+            var base = baseTemplateById(id);
+            return base.custom ? base.prompt : buildPrompt(base);
+        }
+
+        // 追加時に入れておく下書き。共通の制約は最初から入る
+        function starterPrompt(noun) {
+            return buildPrompt({
+                role: 'あなたは文章を整える担当者です。',
+                source: '「書き起こし（トランスクリプト）」および任意で提供される「補足メモ」',
+                noun: noun || '文書',
+                guide: '各項目の説明：\n（どの内容をどの項目に書くかを、ここに書きます）',
+                extra: [],
+                format: '＜見出し＞：'
+            });
+        }
 
         // 編集で消えた共通の制約を探す
         function missingCommonRules(text) {
@@ -2715,17 +2906,23 @@
          * ---------------------------------------------------------------- */
         function buildTemplateOptions() {
             var sel = $('templateSelect');
-            for (var i = 0; i < TEMPLATES.length; i++) {
+            var list = visibleTemplates();
+            sel.innerHTML = '';
+            for (var i = 0; i < list.length; i++) {
                 var opt = document.createElement('option');
-                opt.value = TEMPLATES[i].id;
-                opt.textContent = TEMPLATES[i].label;
+                opt.value = list[i].id;
+                opt.textContent = list[i].label +
+                    (isHiddenTemplate(list[i].id) ? '（一覧から外した文書）' : '');
                 sel.appendChild(opt);
             }
         }
 
         function applyTemplate() {
             var t = currentTemplate();
-            $('templateSelect').value = t.id;
+            var sel = $('templateSelect');
+            // 一覧に無い文書（履歴から外した文書に戻ったときなど）は一覧を作り直す
+            sel.value = t.id;
+            if (sel.value !== t.id) { buildTemplateOptions(); sel.value = t.id; }
             $('templateHint').textContent = t.hint;
             $('transcriptHint').textContent = t.transcriptHint;
             $('notesTitle').textContent = t.notesTitle;
@@ -2733,7 +2930,8 @@
             $('generateBtn').textContent = '✨ ' + t.noun + 'を生成';
             $('loadingLabel').textContent = t.noun + 'を作成中...';
             $('outputTitle').textContent = '✅ 作成された' + t.noun;
-            $('templateEdited').textContent = isTemplateEdited(t.id) ? '✏️ 指示を編集済み' : '';
+            $('templateEdited').textContent = t.custom ? '🧩 自分で追加した文書'
+                                             : isTemplateEdited(t.id) ? '✏️ 指示を編集済み' : '';
         }
 
         /* ------------------------------------------------------------------
@@ -2741,15 +2939,74 @@
          * ---------------------------------------------------------------- */
         var tplEditingId = null;    // 編集欄にいま読み込んでいるテンプレート
         var tplDirty = false;       // 保存していない書き換えがあるか
+        var tplMode = 'edit';       // 'edit' = 既存を編集 / 'new' = 追加
+
+        function setShown(el, on) { el.style.display = on ? '' : 'none'; }
 
         function fillTemplateEditor() {
+            $('tplCommonRules').textContent = '- ' + COMMON_RULES.join('\n- ');
+            renderHiddenTemplates();
+
+            if (tplMode === 'new') {
+                tplEditingId = null;
+                tplDirty = false;
+                $('tplEditorTitle').textContent = '新しい文書を追加';
+                $('tplName').value = '';
+                $('tplNoun').value = '';
+                $('tplPrompt').value = starterPrompt('');
+                updateTemplateEditorMode();
+                updateTemplatePreview();
+                return;
+            }
+
             var base = baseTemplateById(prefs.template);
             tplEditingId = base.id;
             tplDirty = false;
             $('tplEditorTitle').textContent = base.label;
+            $('tplName').value = base.custom ? base.label : '';
+            $('tplNoun').value = base.custom ? base.noun : '';
             $('tplPrompt').value = isTemplateEdited(base.id) ? tplOverrides[base.id] : defaultPrompt(base.id);
-            $('tplCommonRules').textContent = '- ' + COMMON_RULES.join('\n- ');
+            updateTemplateEditorMode();
             updateTemplatePreview();
+        }
+
+        // 追加中か、既定の文書か、自作の文書かで出す操作を変える
+        function updateTemplateEditorMode() {
+            var isNew = tplMode === 'new';
+            var base = isNew ? null : baseTemplateById(tplEditingId || prefs.template);
+            var custom = isNew || !!(base && base.custom);
+
+            setShown($('tplNameGroup'), custom);
+            setShown($('tplNounGroup'), custom);
+            setShown($('tplResetBtn'), !isNew && !custom);
+            setShown($('tplDeleteBtn'), !isNew && custom);
+            setShown($('tplHideBtn'), !isNew && !custom);
+            setShown($('tplCancelBtn'), isNew);
+            $('tplSaveBtn').textContent = isNew ? '追加する' : '保存';
+        }
+
+        // 一覧から外した文書を並べ、戻せるようにする
+        function renderHiddenTemplates() {
+            var box = $('tplHiddenBox'), list = $('tplHiddenList');
+            list.innerHTML = '';
+            setShown(box, hiddenTemplates.length > 0);
+            $('tplHiddenCount').textContent = String(hiddenTemplates.length);
+            for (var i = 0; i < hiddenTemplates.length; i++) {
+                (function (id) {
+                    var row = document.createElement('div');
+                    row.className = 'tpl-hidden-row';
+                    var name = document.createElement('span');
+                    name.textContent = baseTemplateById(id).label;
+                    var btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn-clear btn-small';
+                    btn.textContent = '一覧に戻す';
+                    btn.addEventListener('click', function () { unhideTemplate(id); });
+                    row.appendChild(name);
+                    row.appendChild(btn);
+                    list.appendChild(row);
+                }(hiddenTemplates[i]));
+            }
         }
 
         // いま編集欄に入っている内容で、実際に送られる指示を見せる
@@ -2769,31 +3026,74 @@
             }
         }
 
-        // 空欄なら既定の指示に戻す
+        // 空欄なら既定の指示に戻す（追加中と自作の文書には既定が無いのでそのまま）
         function promptFromEditor() {
-            var id = tplEditingId || prefs.template;
-            return $('tplPrompt').value.trim() ? $('tplPrompt').value : defaultPrompt(id);
+            var text = $('tplPrompt').value;
+            if (text.trim()) return text;
+            if (tplMode === 'new') return text;
+            var base = baseTemplateById(tplEditingId || prefs.template);
+            return base.custom ? text : defaultPrompt(base.id);
         }
 
         function toggleTemplateEditor() {
+            if ($('templateEditor').classList.contains('active') && !confirmDiscardTemplateEdit('閉じ')) return;
             var open = $('templateEditor').classList.toggle('active');
             $('templateEditToggle').textContent = open ? '閉じる' : '✏️ 指示を編集';
+            tplMode = 'edit';
             if (open) {
                 fillTemplateEditor();
                 $('templateEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         }
 
+        // 保存していない書き換えを黙って捨てない
+        function confirmDiscardTemplateEdit(verb) {
+            if (!tplDirty || !$('templateEditor').classList.contains('active')) return true;
+            return window.confirm('指示の編集内容が保存されていません。\n破棄して' + verb + 'ますか？');
+        }
+
+        function startNewTemplate() {
+            if (!confirmDiscardTemplateEdit('新しい文書の追加に移り')) return;
+            if (customTemplates.length >= MAX_CUSTOM_TEMPLATES) {
+                showError('追加できる文書は ' + MAX_CUSTOM_TEMPLATES + ' 件までです。使わない文書を削除してください。');
+                return;
+            }
+            tplMode = 'new';
+            if (!$('templateEditor').classList.contains('active')) {
+                $('templateEditor').classList.add('active');
+                $('templateEditToggle').textContent = '閉じる';
+            }
+            fillTemplateEditor();
+            $('templateEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function cancelNewTemplate() {
+            if (!confirmDiscardTemplateEdit('追加をやめ')) return;
+            tplMode = 'edit';
+            fillTemplateEditor();
+        }
+
         // 生成中は指示を触らせない（送信済みの指示と画面がずれないように）
         function setTemplateEditorEnabled(on) {
             $('templateEditToggle').disabled = !on;
+            $('templateAddBtn').disabled = !on;
             $('tplSaveBtn').disabled = !on;
             $('tplResetBtn').disabled = !on;
+            $('tplCancelBtn').disabled = !on;
+            $('tplHideBtn').disabled = !on;
+            $('tplDeleteBtn').disabled = !on;
             $('tplPrompt').disabled = !on;
+            $('tplName').disabled = !on;
+            $('tplNoun').disabled = !on;
         }
 
+        var TPL_SAVE_FAILED = 'この端末では保存できません（保存領域がいっぱいか、プライベートブラウズの可能性があります）。';
+
         function saveTemplateEditor() {
+            if (tplMode === 'new') { createTemplateFromEditor(); return; }
             var base = baseTemplateById(tplEditingId || prefs.template);
+            if (base.custom) { saveCustomTemplateFromEditor(base); return; }
+
             var text = promptFromEditor();
             var changed = text !== defaultPrompt(base.id);
 
@@ -2805,7 +3105,7 @@
                 // 保存できなければ元に戻す（画面と保存内容がずれないように）
                 if (before !== undefined) tplOverrides[base.id] = before; else delete tplOverrides[base.id];
                 saveTemplateOverrides();
-                showError('この端末では指示を保存できません（保存領域がいっぱいか、プライベートブラウズの可能性があります）。');
+                showError(TPL_SAVE_FAILED);
                 return;
             }
             clearError();
@@ -2813,6 +3113,118 @@
             fillTemplateEditor();
             showSuccess(changed ? base.label + 'の指示を保存しました'
                                 : base.label + 'の指示を既定に戻しました');
+        }
+
+        // 自作の文書は上書きで保存する（既定が無いので「戻す」も無い）
+        function saveCustomTemplateFromEditor(base) {
+            var label = $('tplName').value.trim();
+            var text = $('tplPrompt').value;
+            if (!label) { showError('文書の名前を入力してください。'); return; }
+            if (!text.trim()) { showError('指示を入力してください。空欄では保存できません。'); return; }
+
+            var before = { label: base.label, noun: base.noun, prompt: base.prompt };
+            base.label = label;
+            base.noun = $('tplNoun').value.trim() || label;
+            base.prompt = text;
+
+            if (!saveUserTemplates()) {
+                base.label = before.label;
+                base.noun = before.noun;
+                base.prompt = before.prompt;
+                showError(TPL_SAVE_FAILED);
+                return;
+            }
+            clearError();
+            buildTemplateOptions();
+            applyTemplate();
+            fillTemplateEditor();
+            showSuccess('「' + base.label + '」を保存しました');
+        }
+
+        function createTemplateFromEditor() {
+            var label = $('tplName').value.trim();
+            var text = $('tplPrompt').value;
+            if (!label) { showError('文書の名前を入力してください。'); return; }
+            if (!text.trim()) { showError('指示を入力してください。'); return; }
+            if (customTemplates.length >= MAX_CUSTOM_TEMPLATES) {
+                showError('追加できる文書は ' + MAX_CUSTOM_TEMPLATES + ' 件までです。使わない文書を削除してください。');
+                return;
+            }
+
+            var t = normalizeCustomTemplate({
+                id: newTemplateId(),
+                label: label,
+                noun: $('tplNoun').value.trim(),
+                prompt: text
+            });
+            customTemplates.push(t);
+            if (!saveUserTemplates()) {
+                customTemplates.pop();
+                showError(TPL_SAVE_FAILED);
+                return;
+            }
+            clearError();
+            tplMode = 'edit';
+            selectTemplate(t.id);        // 追加したものをそのまま選ぶ
+            fillTemplateEditor();
+            showSuccess('「' + t.label + '」を追加しました');
+        }
+
+        function deleteTemplateFromEditor() {
+            var base = baseTemplateById(tplEditingId || prefs.template);
+            if (!base.custom) return;
+            if (!window.confirm('「' + base.label + '」を削除します。\n' +
+                                '指示も一緒に消えます。この文書で作った履歴は残ります。\n\nよろしいですか？')) return;
+
+            var idx = customIndexOf(base.id);
+            var removed = customTemplates.splice(idx, 1)[0];
+            if (!saveUserTemplates()) {
+                customTemplates.splice(idx, 0, removed);
+                showError(TPL_SAVE_FAILED);
+                return;
+            }
+            clearError();
+            if (prefs.template === base.id) selectTemplate(firstVisibleTemplateId());
+            else { buildTemplateOptions(); applyTemplate(); }
+            fillTemplateEditor();
+            showSuccess('「' + removed.label + '」を削除しました');
+        }
+
+        // 既定の文書は消せない。使わないものは一覧から外す（いつでも戻せる）
+        function hideTemplateFromEditor() {
+            var base = baseTemplateById(tplEditingId || prefs.template);
+            if (base.custom || isHiddenTemplate(base.id)) return;
+            if (visibleTemplateCount() <= 1) {
+                showError('すべての文書を一覧から外すことはできません。');
+                return;
+            }
+            hiddenTemplates.push(base.id);
+            if (!saveUserTemplates()) {
+                hiddenTemplates.pop();
+                showError(TPL_SAVE_FAILED);
+                return;
+            }
+            clearError();
+            if (prefs.template === base.id) selectTemplate(firstVisibleTemplateId());
+            else { buildTemplateOptions(); applyTemplate(); }
+            fillTemplateEditor();
+            showSuccess(base.label + 'を一覧から外しました。「一覧から外した文書」からいつでも戻せます');
+        }
+
+        function unhideTemplate(id) {
+            var at = hiddenTemplates.indexOf(id);
+            if (at < 0) return;
+            hiddenTemplates.splice(at, 1);
+            if (!saveUserTemplates()) {
+                hiddenTemplates.splice(at, 0, id);
+                showError(TPL_SAVE_FAILED);
+                return;
+            }
+            clearError();
+            buildTemplateOptions();
+            applyTemplate();
+            fillTemplateEditor();
+            showSuccess(baseTemplateById(id).label + 'を一覧に戻しました');
         }
 
         function resetTemplateEditor() {
@@ -2830,20 +3242,13 @@
             showSuccess(base.label + 'の指示を既定に戻しました');
         }
 
-        // 利用者が選択を変えたときだけ呼ばれる（applyTemplate では change は起きない）
-        function onTemplateChange() {
-            // 編集中の内容を黙って捨てない
-            if (tplDirty && $('templateEditor').classList.contains('active')) {
-                if (!window.confirm('指示の編集内容が保存されていません。\n破棄して別の文書に切り替えますか？')) {
-                    $('templateSelect').value = tplEditingId;
-                    return;
-                }
-            }
-            prefs.template = $('templateSelect').value;
+        // 作る文書を切り替える（一覧の操作・追加・削除から共通で呼ぶ）
+        function selectTemplate(id) {
+            prefs.template = id;
             savePrefs();
             cancelAutoGenerate();
+            buildTemplateOptions();
             applyTemplate();
-            if ($('templateEditor').classList.contains('active')) fillTemplateEditor();
 
             // 別の文書を作るということなので、次の録音は新しいセッションにする。
             // ここでは消さず、録音を始める時点で切り替える（誤操作で内容を失わないため）
@@ -2851,6 +3256,20 @@
                 templateChangedForSession = true;
                 updateSessionBar();
             }
+        }
+
+        // 利用者が選択を変えたときだけ呼ばれる（applyTemplate では change は起きない）
+        function onTemplateChange() {
+            // 編集中の内容を黙って捨てない
+            if (tplDirty && $('templateEditor').classList.contains('active')) {
+                if (!window.confirm('指示の編集内容が保存されていません。\n破棄して別の文書に切り替えますか？')) {
+                    $('templateSelect').value = tplEditingId || prefs.template;
+                    return;
+                }
+            }
+            tplMode = 'edit';
+            selectTemplate($('templateSelect').value);
+            if ($('templateEditor').classList.contains('active')) fillTemplateEditor();
         }
 
         function displayOutput(text) {
@@ -3047,6 +3466,7 @@
          * （iOS のアプリ内ブラウザでインライン onclick が無効化されることがある）
          * ================================================================ */
         function init() {
+            loadUserTemplates();       // 自作の文書を先に読む（設定の検証で必要）
             loadTemplateOverrides();
             loadPrefs();
             initSettings();
@@ -3125,11 +3545,28 @@
 
             $('templateSelect').addEventListener('change', onTemplateChange);
             $('templateEditToggle').addEventListener('click', toggleTemplateEditor);
+            $('templateAddBtn').addEventListener('click', startNewTemplate);
             $('tplSaveBtn').addEventListener('click', saveTemplateEditor);
             $('tplResetBtn').addEventListener('click', resetTemplateEditor);
+            $('tplCancelBtn').addEventListener('click', cancelNewTemplate);
+            $('tplHideBtn').addEventListener('click', hideTemplateFromEditor);
+            $('tplDeleteBtn').addEventListener('click', deleteTemplateFromEditor);
             $('tplPrompt').addEventListener('input', function () {
                 tplDirty = true;
                 updateTemplatePreview();
+            });
+            $('tplName').addEventListener('input', function () {
+                // 追加中で指示にまだ手を付けていなければ、名前に合わせて下書きを差し替える
+                if (tplMode === 'new' && !tplDirty) {
+                    $('tplPrompt').value = starterPrompt($('tplNoun').value.trim() || this.value.trim());
+                    updateTemplatePreview();
+                }
+            });
+            $('tplNoun').addEventListener('input', function () {
+                if (tplMode === 'new' && !tplDirty) {
+                    $('tplPrompt').value = starterPrompt(this.value.trim() || $('tplName').value.trim());
+                    updateTemplatePreview();
+                }
             });
             $('newSessionBtn').addEventListener('click', startNewSession);
             $('recordBtn').addEventListener('click', toggleRecording);
