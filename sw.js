@@ -5,7 +5,7 @@
  *
  * 更新手順: アプリのファイルを変更したら VERSION を上げる。
  */
-var VERSION = 'v11';
+var VERSION = 'v12';
 var CACHE = 'medical-voice-' + VERSION;
 
 var SHELL = [

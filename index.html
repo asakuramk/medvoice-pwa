@@ -269,6 +269,44 @@
 
         .waveform-note.warn { color: var(--notice-fg); font-weight: 500; }
 
+        /* 認識の状態表示（マイクを 2 重に開かないための、波形の代わり） */
+        .recog-activity {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background-color: var(--surface);
+            border: 1px solid var(--gray-200);
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--gray-900);
+        }
+        .recog-activity.active { display: flex; }
+        .recog-activity.warn {
+            background-color: var(--notice-bg);
+            border-color: var(--notice-br);
+            color: var(--notice-fg);
+        }
+        .recog-dot {
+            flex: 0 0 auto;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: var(--gray-200);
+        }
+        .recog-dot.hot { background-color: var(--success); animation: recogPulse 1s ease-out infinite; }
+        .recog-dot.warn { background-color: var(--danger); }
+        @keyframes recogPulse {
+            0%   { transform: scale(1);   opacity: 1; }
+            70%  { transform: scale(1.6); opacity: 0.35; }
+            100% { transform: scale(1);   opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .recog-dot.hot { animation: none; }
+        }
+
         .auto-countdown {
             display: none;
             align-items: center;
@@ -651,12 +689,22 @@
                 </div>
 
                 <div class="checkbox-row">
-                    <input type="checkbox" id="showWaveform" checked>
+                    <input type="checkbox" id="showWaveform">
                     <div>
                         <label for="showWaveform">録音中にマイクの波形を表示する</label>
-                        <p class="info-text">声が拾えているかをその場で確認できます。マイクの取得に失敗した場合でも録音は続きます。</p>
+                        <p class="info-text">
+                            <strong>iPhone では、これをオンにすると聞き取りの精度が大きく落ちることがあります。</strong>
+                            波形はマイクをもう 1 つ開いて描くため、音声認識とマイクを取り合うためです。
+                            オフのときは、代わりに「認識できているか」を文字で表示します。
+                        </p>
                     </div>
                 </div>
+
+                <details class="tpl-details">
+                    <summary>マイクと認識の状態（うまくいかないときの確認用）</summary>
+                    <pre class="tpl-preview" id="recogStats"></pre>
+                    <button type="button" class="btn-clear btn-small" id="copyStatsBtn">この内容をコピー</button>
+                </details>
                 <div class="checkbox-row">
                     <input type="checkbox" id="autoSaveDraft" checked>
                     <div>
@@ -760,6 +808,10 @@
                 <canvas id="waveform" aria-label="マイク入力の波形"></canvas>
                 <p class="waveform-note" id="waveformNote"></p>
             </div>
+            <div class="recog-activity" id="recogActivity">
+                <span class="recog-dot" id="recogDot"></span>
+                <span id="recogActivityText"></span>
+            </div>
             <div class="interim-text" id="interimText"></div>
             <div class="auto-countdown" id="autoCountdown">
                 <span id="autoCountdownText"></span>
@@ -852,12 +904,16 @@
 
         // usedBefore: 一度でも生成に成功したか。API キーが消えた原因（C-05）を
         // 「未設定」と区別して案内するために持つ。
+        // showWaveform の既定は false。iPhone では波形用にマイクをもう 1 つ開くと
+        // 音声認識と取り合いになり、聞き取りが大きく落ちることがあるため（C-10）。
         var prefs = { autoGenerate: true, autoSaveDraft: true, hideInstallHint: false, usedBefore: false,
-                      showWaveform: true };
+                      showWaveform: false, micPriorityApplied: false };
         // 文字列・数値の設定は真偽値と別に扱う（loadPrefs が !! で潰さないように）
         prefs.template = 'soap';
         prefs.glossary = '';          // よく使う語（用語集）。1 行に 1 語
         prefs.retentionDays = 30;     // 0 = 履歴を保存しない
+
+        var migratedMicPriority = false;   // 波形の既定を変えたことを起動後に伝えるため
 
         function loadPrefs() {
             try {
@@ -874,6 +930,13 @@
                     }
                     // 知らないテンプレート名（削除した文書など）が入っていたら既定に戻す
                     if (templateById(prefs.template).id !== prefs.template) prefs.template = firstVisibleTemplateId();
+
+                    // 以前の版は波形が既定でオンだった。認識を優先する設定へ一度だけ移す
+                    if (!prefs.micPriorityApplied) {
+                        prefs.showWaveform = false;
+                        prefs.micPriorityApplied = true;
+                        migratedMicPriority = true;
+                    }
                 }
             } catch (e) { /* 壊れていたら既定値のまま */ }
         }
@@ -972,7 +1035,10 @@
                 (g.fixes.length ? '（うち ' + g.fixes.length + ' 件は置き換え）' : '') + '。';
         }
 
-        function toggleSettings() { $('settingsPanel').classList.toggle('active'); }
+        function toggleSettings() {
+            renderRecogStats();
+            $('settingsPanel').classList.toggle('active');
+        }
 
         function saveSettings() {
             var apiKey = $('apiKey').value.trim();
@@ -1028,6 +1094,25 @@
         var pendingInterim = '';       // 確定前の文。打ち切られたら書き起こしへ移す
         var wakeLock = null;
 
+        /* 認識の状態。声を拾えているかの表示と、うまくいかないときの報告に使う */
+        var recogStats = null;
+        var recogTimer = null;
+
+        function resetRecogStats() {
+            recogStats = {
+                startedAt: Date.now(), starts: 0, ends: 0, finals: 0, chars: 0,
+                noSpeech: 0, errors: {}, lastError: '', lastErrorAt: 0, lastResultAt: 0
+            };
+        }
+        resetRecogStats();
+
+        function countRecogError(err) {
+            if (err === 'no-speech') { recogStats.noSpeech++; return; }
+            recogStats.errors[err] = (recogStats.errors[err] || 0) + 1;
+            recogStats.lastError = err;
+            recogStats.lastErrorAt = Date.now();
+        }
+
         function buildRecognition() {
             var rec = new SpeechRecognitionCtor();
             rec.lang = 'ja-JP';
@@ -1038,6 +1123,7 @@
 
             rec.onstart = function () {
                 recognizing = true;
+                recogStats.starts++;
                 sessionStartedAt = Date.now();
                 setRecordingUI(true);
                 clearError();
@@ -1045,9 +1131,13 @@
 
             rec.onresult = function (event) {
                 var interim = '';
+                recogStats.lastResultAt = Date.now();
                 for (var i = event.resultIndex; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
-                        appendTranscript(pickAlternative(event.results[i]));
+                        var finalText = pickAlternative(event.results[i]);
+                        recogStats.finals++;
+                        recogStats.chars += String(finalText || '').length;
+                        appendTranscript(finalText);
                     } else {
                         interim += event.results[i][0].transcript;
                     }
@@ -1061,6 +1151,7 @@
 
             rec.onerror = function (event) {
                 var err = event.error;
+                countRecogError(err);
                 // 無音・自動停止は iOS では日常的に起きるので、エラー扱いしない
                 if (err === 'no-speech' || err === 'aborted') return;
 
@@ -1098,6 +1189,7 @@
 
             rec.onend = function () {
                 recognizing = false;
+                recogStats.ends++;
                 flushPendingInterim();      // 打ち切られた文を取りこぼさない
                 if (!wantRecording) {
                     setRecordingUI(false);
@@ -1187,6 +1279,74 @@
                 $('recordingIndicator').classList.remove('active');
                 $('interimText').textContent = '';
             }
+        }
+
+        /* ------------------------------------------------------------------
+         * 認識の状態表示
+         *
+         * 波形はマイクをもう 1 つ開くため、iPhone では音声認識と取り合いになる
+         * （C-10）。波形を出さないときは、認識の結果が届いているかどうかで
+         * 「声を拾えているか」を伝える。マイクは増やさない。
+         * ---------------------------------------------------------------- */
+        var RECOG_HOT_MS = 2500;     // 直前に文字が届いた
+        var RECOG_QUIET_MS = 8000;   // これだけ何も届かなければ注意を出す
+
+        function startRecogActivity() {
+            clearInterval(recogTimer);
+            if (prefs.showWaveform) { $('recogActivity').classList.remove('active'); return; }
+            $('recogActivity').classList.add('active');
+            updateRecogActivity();
+            recogTimer = setInterval(updateRecogActivity, 500);
+        }
+
+        function stopRecogActivity() {
+            clearInterval(recogTimer);
+            recogTimer = null;
+            $('recogActivity').classList.remove('active');
+        }
+
+        function updateRecogActivity() {
+            if (!wantRecording) { stopRecogActivity(); return; }
+            var dot = $('recogDot'), box = $('recogActivity'), text = $('recogActivityText');
+            var since = recogStats.lastResultAt ? Date.now() - recogStats.lastResultAt : -1;
+
+            dot.className = 'recog-dot';
+            box.classList.remove('warn');
+
+            if (since >= 0 && since < RECOG_HOT_MS) {
+                dot.className = 'recog-dot hot';
+                text.textContent = '声を認識しています（' + recogStats.chars + ' 文字）';
+            } else if (since < 0 && Date.now() - recogStats.startedAt < RECOG_QUIET_MS) {
+                text.textContent = '話しかけてください…';
+            } else if (since < 0 || since > RECOG_QUIET_MS) {
+                dot.className = 'recog-dot warn';
+                box.classList.add('warn');
+                text.textContent = '声を拾えていないようです。iPhone の下端にマイクがあります。' +
+                                   '話し手のほうへ向け、30〜50cm まで近づけてください';
+            } else {
+                text.textContent = '待機中（最後の文字から ' + Math.round(since / 1000) + ' 秒）';
+            }
+        }
+
+        // うまくいかないときに、そのまま貼って報告できる形にする
+        function renderRecogStats() {
+            var el = $('recogStats');
+            if (!el) return;
+            var s = recogStats;
+            var lines = [];
+            var mins = Math.max(0, Math.round((Date.now() - s.startedAt) / 1000));
+            lines.push('経過: ' + mins + ' 秒 / 認識の開始 ' + s.starts + ' 回 / 終了 ' + s.ends + ' 回');
+            lines.push('確定した文: ' + s.finals + ' 件 / ' + s.chars + ' 文字');
+            lines.push('無音での終了: ' + s.noSpeech + ' 回');
+            var errs = [];
+            for (var k in s.errors) {
+                if (Object.prototype.hasOwnProperty.call(s.errors, k)) errs.push(k + ' ' + s.errors[k] + ' 回');
+            }
+            lines.push('エラー: ' + (errs.length ? errs.join(' / ') : 'なし'));
+            lines.push('波形: ' + (prefs.showWaveform ? '表示する（認識と取り合いになります）' : '表示しない（認識を優先）'));
+            lines.push('起動: ' + (isStandalone ? 'ホーム画面アプリ' : 'ブラウザ') +
+                       ' / 認識: ' + (SpeechRecognitionCtor ? '利用可' : '利用不可'));
+            el.textContent = lines.join('\n');
         }
 
         /* ==================================================================
@@ -1538,11 +1698,14 @@
             if (!recognition) recognition = buildRecognition();
             wantRecording = true;
             quickFailCount = 0;
+            resetRecogStats();
             requestWakeLock();
             // iOS ではユーザー操作と同じイベント内で start() を呼ぶ必要がある
             safeStart();
-            // AudioContext も操作と同じイベント内で作る（iOS は suspended で始まる）
+            // 波形はマイクをもう 1 つ開くため、認識と取り合いになる（C-10）。
+            // 表示する設定のときだけ開く。AudioContext も操作と同じイベント内で作る
             startWaveform();
+            startRecogActivity();
             setRecordingUI(true);
             logRecordingStarted();
         }
@@ -1554,6 +1717,7 @@
             clearTimeout(restartTimer);
             releaseWakeLock();
             stopWaveform();
+            stopRecogActivity();
             if (recognition) {
                 try { recognition.stop(); } catch (e) { /* noop */ }
             }
@@ -3469,6 +3633,7 @@
             loadUserTemplates();       // 自作の文書を先に読む（設定の検証で必要）
             loadTemplateOverrides();
             loadPrefs();
+            if (migratedMicPriority) savePrefs();
             initSettings();
             checkEnvironment();
             checkDraft();
@@ -3530,10 +3695,19 @@
                 prefs.showWaveform = this.checked;
                 savePrefs();
                 if (this.checked) {
+                    stopRecogActivity();
                     if (wantRecording) startWaveform();
+                    showSuccess('波形を表示します。聞き取りが悪くなる場合はオフに戻してください');
                 } else {
                     stopWaveform();
+                    if (wantRecording) startRecogActivity();
                 }
+                renderRecogStats();
+            });
+
+            $('copyStatsBtn').addEventListener('click', function () {
+                renderRecogStats();
+                copyText($('recogStats').textContent, '認識の状態をコピーしました');
             });
 
             $('autoSaveDraft').addEventListener('change', function () {
