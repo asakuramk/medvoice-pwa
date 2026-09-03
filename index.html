@@ -658,6 +658,15 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    <label for="micDevice">使うマイク</label>
+                    <select id="micDevice"></select>
+                    <div class="button-group">
+                        <button type="button" class="btn-clear btn-small" id="micRefreshBtn">マイクを調べ直す</button>
+                    </div>
+                    <p class="info-text" id="micHint"></p>
+                </div>
+
+                <div class="form-group">
                     <label for="sttMode">書き起こしの方法</label>
                     <select id="sttMode">
                         <option value="device">iPhone の音声認識（無料・その場で文字になる）</option>
@@ -952,6 +961,8 @@
         prefs.template = 'soap';
         prefs.glossary = '';          // よく使う語（用語集）。1 行に 1 語
         prefs.retentionDays = 30;     // 0 = 履歴を保存しない
+        prefs.micDeviceId = '';       // 使うマイク。空なら端末の既定（F-23）
+        prefs.micLabel = '';          // 選んだマイクの名前（表示用）
         prefs.sttMode = 'device';     // 'device' = iPhone の音声認識 / 'api' = 録音して送る
         prefs.sttEndpoint = '';       // 空なら STT_DEFAULT_ENDPOINT
         prefs.sttModel = '';          // 空なら STT_DEFAULT_MODEL
@@ -1058,6 +1069,8 @@
             if (savedApiKey) $('apiKey').value = savedApiKey;
             var savedSttKey = storage.get(KEY_STT);
             if (savedSttKey) $('sttKey').value = savedSttKey;
+            renderMicOptions();
+            refreshMicList(false);      // 許可済みなら名前も出る
             $('sttEndpoint').value = prefs.sttEndpoint || '';
             $('sttEndpoint').placeholder = STT_DEFAULT_ENDPOINT;
             $('sttModel').value = prefs.sttModel || '';
@@ -1130,6 +1143,7 @@
             $('sttModeHint').textContent = api
                 ? '録音を止めると、音声を書き起こしサービスへ送って文字にします。長い録音は 4 分ごとに区切って送ります。'
                 : 'iPhone の音声認識をその場で使います。無料ですが、話し手が離れている場面では取りこぼしが増えます。';
+            renderMicHint();   // マイクを選べるかは方法によって変わる（F-23）
         }
 
         function clearApiKey() {
@@ -1434,6 +1448,8 @@
             if (sttEnabled()) {
                 lines.push('送信待ち: ' + sttPending + ' 件 / 送れていない録音: ' + sttFailed.length + ' 件');
             }
+            lines.push('マイク: ' + (prefs.micDeviceId ? '選択（' + (prefs.micLabel || '名前なし') + '）' : '端末の既定') +
+                       (micActiveLabel ? ' / 使用中: ' + micActiveLabel : ''));
             lines.push('波形: ' + (prefs.showWaveform ? '表示する' : '表示しない'));
             lines.push('起動: ' + (isStandalone ? 'ホーム画面アプリ' : 'ブラウザ') +
                        ' / 認識: ' + (SpeechRecognitionCtor ? '利用可' : '利用不可') +
@@ -1485,6 +1501,149 @@
         function waveSupported() {
             return !!(window.AudioContext || window.webkitAudioContext) &&
                    !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        }
+
+        /* ------------------------------------------------------------------
+         * F-23 使うマイクを選ぶ
+         *
+         * Bluetooth のマイクやピンマイクを繋いだときに、そちらから録れるように
+         * する。選べるのは**このアプリがマイクを開くとき**、つまり波形と
+         * 「録音して書き起こす」（F-22）である。iPhone の音声認識は端末側の
+         * 既定マイクを使う仕組みで、アプリからは指定できない（C-12）。
+         * ---------------------------------------------------------------- */
+        var micDevices = [];          // { deviceId, label }
+        var micActiveLabel = '';      // いま実際に使っているマイクの名前
+
+        function micSelectable() {
+            return !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices);
+        }
+
+        function micConstraints(useSelected) {
+            var audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+            if (useSelected && prefs.micDeviceId) audio.deviceId = { exact: prefs.micDeviceId };
+            return { audio: audio };
+        }
+
+        // 選んだマイクで開く。見つからなければ既定のマイクに戻して続ける
+        function openMicrophone() {
+            var wanted = !!prefs.micDeviceId;
+            return navigator.mediaDevices.getUserMedia(micConstraints(wanted))
+                .then(function (stream) {
+                    rememberActiveMic(stream);
+                    return stream;
+                })
+                .catch(function (e) {
+                    if (!wanted) throw e;
+                    // 繋いでいたマイクを外した場合など。録音を止めずに既定へ落とす
+                    return navigator.mediaDevices.getUserMedia(micConstraints(false))
+                        .then(function (stream) {
+                            rememberActiveMic(stream);
+                            showSuccess('選んでいたマイク（' + (prefs.micLabel || '別のマイク') +
+                                        '）が見つからないため、端末のマイクで録音します');
+                            return stream;
+                        });
+                });
+        }
+
+        function rememberActiveMic(stream) {
+            var track = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+            micActiveLabel = (track && track.label) || '';
+            renderRecogStats();
+        }
+
+        function micLabelFor(d, i) {
+            if (d.label) return d.label;
+            return 'マイク ' + (i + 1) + '（名前は許可後に出ます）';
+        }
+
+        // 一覧を作る。名前は一度マイクを許可しないと空になる（ブラウザの仕様）
+        function refreshMicList(unlock) {
+            if (!micSelectable()) { renderMicOptions(); return Promise.resolve(); }
+            var pre = Promise.resolve();
+            if (unlock) {
+                pre = navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(function (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); })
+                    .catch(function () { /* 許可されなくても一覧だけは出す */ });
+            }
+            return pre.then(function () {
+                return navigator.mediaDevices.enumerateDevices();
+            }).then(function (list) {
+                micDevices = [];
+                for (var i = 0; i < list.length; i++) {
+                    if (list[i].kind !== 'audioinput') continue;
+                    micDevices.push({ deviceId: list[i].deviceId, label: list[i].label || '' });
+                }
+                renderMicOptions();
+            }).catch(function () {
+                micDevices = [];
+                renderMicOptions();
+            });
+        }
+
+        function renderMicOptions() {
+            var sel = $('micDevice');
+            if (!sel) return;
+            sel.innerHTML = '';
+            var def = document.createElement('option');
+            def.value = '';
+            def.textContent = '端末のマイク（自動）';
+            sel.appendChild(def);
+
+            var found = false;
+            for (var i = 0; i < micDevices.length; i++) {
+                var d = micDevices[i];
+                if (!d.deviceId || d.deviceId === 'default') continue;
+                var opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.textContent = micLabelFor(d, i);
+                sel.appendChild(opt);
+                if (d.deviceId === prefs.micDeviceId) found = true;
+            }
+            // 選んでいたマイクが今つながっていなくても、選択は消さずに残す
+            if (prefs.micDeviceId && !found) {
+                var missing = document.createElement('option');
+                missing.value = prefs.micDeviceId;
+                missing.textContent = (prefs.micLabel || '選んだマイク') + '（いま見つかりません）';
+                sel.appendChild(missing);
+            }
+            sel.value = prefs.micDeviceId || '';
+            renderMicHint();
+        }
+
+        function renderMicHint() {
+            var el = $('micHint');
+            if (!el) return;
+            if (!micSelectable()) {
+                el.textContent = 'この端末ではマイクを選べません。端末の既定のマイクを使います。';
+                return;
+            }
+            var lines = [];
+            if (prefs.micDeviceId) lines.push('選択中: ' + (prefs.micLabel || '選んだマイク'));
+            if (sttEnabled()) {
+                lines.push('この設定は「録音して書き起こし API へ送る」と波形に効きます。');
+            } else {
+                lines.push('⚠️ いまの「iPhone の音声認識」では、端末が選んだマイクが使われます（アプリからは指定できません）。' +
+                           'Bluetooth マイクを使うには、書き起こしの方法を「録音して書き起こし API へ送る」にしてください。');
+            }
+            lines.push('Bluetooth のマイクは通話用の音質になることがあり、内蔵マイクより悪くなる場合もあります。両方お試しください。');
+            el.textContent = lines.join('\n');
+        }
+
+        function onMicDeviceChange() {
+            var sel = $('micDevice');
+            var id = sel.value;
+            var label = '';
+            for (var i = 0; i < micDevices.length; i++) {
+                if (micDevices[i].deviceId === id) label = micDevices[i].label || '';
+            }
+            prefs.micDeviceId = id;
+            prefs.micLabel = id ? (label || sel.options[sel.selectedIndex].textContent) : '';
+            savePrefs();
+            renderMicHint();
+            renderRecogStats();
+            if (wantRecording) {
+                showSuccess('次に録音を始めるときから、選んだマイクを使います');
+            }
         }
 
         function readWaveColors() {
@@ -1548,9 +1707,7 @@
             $('waveformWrap').classList.add('active');
             setWaveNote(waveReviving ? '波形を立て直しています...' : 'マイクを準備しています...', false);
 
-            navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-            }).then(function (stream) {
+            openMicrophone().then(function (stream) {
                 if (!wantRecording) {            // 待っている間に止められた
                     stream.getTracks().forEach(function (t) { t.stop(); });
                     return;
@@ -1962,9 +2119,7 @@
                 showError('書き起こし用の API キーを設定してください（歯車アイコン）。');
                 return false;
             }
-            navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-            }).then(function (stream) {
+            openMicrophone().then(function (stream) {
                 if (!wantRecording) {          // 待っている間に止められた
                     stream.getTracks().forEach(function (t) { t.stop(); });
                     return;
@@ -4050,6 +4205,22 @@
                 }
             });
             $('sttRetryBtn').addEventListener('click', retryFailedTranscriptions);
+
+            $('micDevice').addEventListener('change', onMicDeviceChange);
+            $('micRefreshBtn').addEventListener('click', function () {
+                // 名前を出すには一度マイクの許可が要る
+                refreshMicList(true).then(function () {
+                    showSuccess(micDevices.length > 1
+                        ? micDevices.length + ' 個のマイクが見つかりました'
+                        : '選べるマイクは 1 つだけです（端末のマイク）');
+                });
+            });
+            if (micSelectable() && navigator.mediaDevices.addEventListener) {
+                // Bluetooth のマイクを繋いだ・外したときに一覧を作り直す
+                navigator.mediaDevices.addEventListener('devicechange', function () {
+                    refreshMicList(false);
+                });
+            }
 
             $('autoGenerate').addEventListener('change', function () {
                 prefs.autoGenerate = this.checked;
