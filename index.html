@@ -693,9 +693,11 @@
                     <div>
                         <label for="showWaveform">録音中にマイクの波形を表示する</label>
                         <p class="info-text">
-                            <strong>iPhone では、これをオンにすると聞き取りの精度が大きく落ちることがあります。</strong>
-                            波形はマイクをもう 1 つ開いて描くため、音声認識とマイクを取り合うためです。
-                            オフのときは、代わりに「認識できているか」を文字で表示します。
+                            波形は音声認識とは<strong>別にマイクを開いて</strong>描きます。
+                            そのため聞き取りに影響することがありますが、<strong>良くなるか悪くなるかは端末や場所によって変わります。</strong>
+                            うまく聞き取れないときは、<strong>この設定を切り替えて同じ場面で試し</strong>、
+                            下の「マイクと認識の状態」の文字数を見比べてください。
+                            どちらの設定でも、認識できているかは文字で表示します。
                         </p>
                     </div>
                 </div>
@@ -904,16 +906,18 @@
 
         // usedBefore: 一度でも生成に成功したか。API キーが消えた原因（C-05）を
         // 「未設定」と区別して案内するために持つ。
-        // showWaveform の既定は false。iPhone では波形用にマイクをもう 1 つ開くと
-        // 音声認識と取り合いになり、聞き取りが大きく落ちることがあるため（C-10）。
+        // showWaveform: 波形の表示。波形は音声認識とは別にマイクを開くため、
+        // 端末や環境によって聞き取りへの影響が変わる（C-10）。どちらが良いかは
+        // 実機で試すしかないので、既定は従来どおり表示する側に置き、切り替えられるようにする。
+        // waveChoiceByUser: 利用者が自分で切り替えたか。既定を変える移行で上書きしないため。
         var prefs = { autoGenerate: true, autoSaveDraft: true, hideInstallHint: false, usedBefore: false,
-                      showWaveform: false, micPriorityApplied: false };
+                      showWaveform: true, micPriorityApplied: false, waveChoiceByUser: false };
         // 文字列・数値の設定は真偽値と別に扱う（loadPrefs が !! で潰さないように）
         prefs.template = 'soap';
         prefs.glossary = '';          // よく使う語（用語集）。1 行に 1 語
         prefs.retentionDays = 30;     // 0 = 履歴を保存しない
 
-        var migratedMicPriority = false;   // 波形の既定を変えたことを起動後に伝えるため
+        var migratedMicPriority = false;   // 勝手に変わっていた設定を戻したことを保存するため
 
         function loadPrefs() {
             try {
@@ -931,12 +935,13 @@
                     // 知らないテンプレート名（削除した文書など）が入っていたら既定に戻す
                     if (templateById(prefs.template).id !== prefs.template) prefs.template = firstVisibleTemplateId();
 
-                    // 以前の版は波形が既定でオンだった。認識を優先する設定へ一度だけ移す
-                    if (!prefs.micPriorityApplied) {
-                        prefs.showWaveform = false;
-                        prefs.micPriorityApplied = true;
+                    // v12 は「認識を優先」として波形を勝手に無効にしたが、実機では
+                    // かえって聞き取りが悪くなった。自分で選んでいない端末は元に戻す
+                    if (prefs.micPriorityApplied && !prefs.waveChoiceByUser && !prefs.showWaveform) {
+                        prefs.showWaveform = true;
                         migratedMicPriority = true;
                     }
+                    prefs.micPriorityApplied = false;
                 }
             } catch (e) { /* 壊れていたら既定値のまま */ }
         }
@@ -1293,7 +1298,7 @@
 
         function startRecogActivity() {
             clearInterval(recogTimer);
-            if (prefs.showWaveform) { $('recogActivity').classList.remove('active'); return; }
+            // 波形を出していても併せて表示する。文字が届いているかは波形では分からないため
             $('recogActivity').classList.add('active');
             updateRecogActivity();
             recogTimer = setInterval(updateRecogActivity, 500);
@@ -1343,7 +1348,7 @@
                 if (Object.prototype.hasOwnProperty.call(s.errors, k)) errs.push(k + ' ' + s.errors[k] + ' 回');
             }
             lines.push('エラー: ' + (errs.length ? errs.join(' / ') : 'なし'));
-            lines.push('波形: ' + (prefs.showWaveform ? '表示する（認識と取り合いになります）' : '表示しない（認識を優先）'));
+            lines.push('波形: ' + (prefs.showWaveform ? '表示する（マイクを 2 つ開く）' : '表示しない（マイクは 1 つ）'));
             lines.push('起動: ' + (isStandalone ? 'ホーム画面アプリ' : 'ブラウザ') +
                        ' / 認識: ' + (SpeechRecognitionCtor ? '利用可' : '利用不可'));
             el.textContent = lines.join('\n');
@@ -3693,15 +3698,14 @@
 
             $('showWaveform').addEventListener('change', function () {
                 prefs.showWaveform = this.checked;
+                prefs.waveChoiceByUser = true;   // 自分で選んだ設定は、以後こちらで上書きしない
                 savePrefs();
                 if (this.checked) {
-                    stopRecogActivity();
-                    if (wantRecording) startWaveform();
-                    showSuccess('波形を表示します。聞き取りが悪くなる場合はオフに戻してください');
+                    if (wantRecording) { waveformBlocked = false; startWaveform(); }
                 } else {
                     stopWaveform();
-                    if (wantRecording) startRecogActivity();
                 }
+                if (wantRecording) startRecogActivity();
                 renderRecogStats();
             });
 
