@@ -657,6 +657,37 @@
                         <button type="button" class="btn-clear btn-small" id="clearKeyBtn">消去</button>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label for="sttMode">書き起こしの方法</label>
+                    <select id="sttMode">
+                        <option value="device">iPhone の音声認識（無料・その場で文字になる）</option>
+                        <option value="api">録音して書き起こし API へ送る（精度は高い・従量課金）</option>
+                    </select>
+                    <p class="info-text" id="sttModeHint"></p>
+                </div>
+
+                <div class="form-group" id="sttGroup">
+                    <label for="sttKey">書き起こし用の API キー</label>
+                    <input type="password" id="sttKey" name="stt-api-key" placeholder="sk-..."
+                           autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+                    <p class="info-text">
+                        <strong>この方法では、録音した音声が書き起こしサービスへ送られます。</strong>
+                        音声は端末にも保存されず、文字にした時点で破棄します。
+                        Claude のキーとは別のキーです。上の「保存」で一緒に保存されます。
+                    </p>
+                    <details class="tpl-details">
+                        <summary>送信先を変える（既定は OpenAI の書き起こし）</summary>
+                        <div class="form-group" style="margin-bottom: 10px;">
+                            <label for="sttEndpoint">エンドポイント</label>
+                            <input type="text" id="sttEndpoint" autocapitalize="none" autocorrect="off" spellcheck="false">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="sttModel">モデル名</label>
+                            <input type="text" id="sttModel" autocapitalize="none" autocorrect="off" spellcheck="false">
+                        </div>
+                    </details>
+                </div>
+
                 <div class="checkbox-row">
                     <input type="checkbox" id="autoGenerate" checked>
                     <div>
@@ -814,6 +845,10 @@
                 <span class="recog-dot" id="recogDot"></span>
                 <span id="recogActivityText"></span>
             </div>
+            <div class="recog-activity" id="sttRetry">
+                <span id="sttRetryText"></span>
+                <button type="button" class="btn-clear btn-small" id="sttRetryBtn">再送信</button>
+            </div>
             <div class="interim-text" id="interimText"></div>
             <div class="auto-countdown" id="autoCountdown">
                 <span id="autoCountdownText"></span>
@@ -897,6 +932,7 @@
         var KEY_LOG   = 'mv.log';
         var KEY_TPL   = 'mv.templates';
         var KEY_UTPL  = 'mv.userTemplates';   // 自分で追加した文書と、一覧から外した文書
+        var KEY_STT   = 'mv.sttKey';          // 書き起こし API のキー（Claude のキーとは別）
 
         var storage = {
             get: function (k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } },
@@ -916,6 +952,9 @@
         prefs.template = 'soap';
         prefs.glossary = '';          // よく使う語（用語集）。1 行に 1 語
         prefs.retentionDays = 30;     // 0 = 履歴を保存しない
+        prefs.sttMode = 'device';     // 'device' = iPhone の音声認識 / 'api' = 録音して送る
+        prefs.sttEndpoint = '';       // 空なら STT_DEFAULT_ENDPOINT
+        prefs.sttModel = '';          // 空なら STT_DEFAULT_MODEL
 
         var migratedMicPriority = false;   // 勝手に変わっていた設定を戻したことを保存するため
 
@@ -1017,6 +1056,13 @@
             renderHiddenTemplates();
             var savedApiKey = storage.get(KEY_API);
             if (savedApiKey) $('apiKey').value = savedApiKey;
+            var savedSttKey = storage.get(KEY_STT);
+            if (savedSttKey) $('sttKey').value = savedSttKey;
+            $('sttEndpoint').value = prefs.sttEndpoint || '';
+            $('sttEndpoint').placeholder = STT_DEFAULT_ENDPOINT;
+            $('sttModel').value = prefs.sttModel || '';
+            $('sttModel').placeholder = STT_DEFAULT_MODEL;
+            applySttMode();
 
             $('autoGenerate').checked = prefs.autoGenerate;
             $('autoSaveDraft').checked = prefs.autoSaveDraft;
@@ -1056,9 +1102,34 @@
                           'このタブを開いている間は、入力した内容がそのまま使われます。');
                 return;
             }
+            // 書き起こし用のキーと送信先も一緒に保存する（F-22）
+            var stt = $('sttKey').value.trim();
+            if (stt) {
+                if (!storage.set(KEY_STT, stt)) {
+                    showError('書き起こし用の API キーを保存できませんでした。\n' +
+                              'このタブを開いている間は、入力した内容がそのまま使われます。');
+                    return;
+                }
+            } else {
+                storage.remove(KEY_STT);
+            }
+            prefs.sttEndpoint = $('sttEndpoint').value.trim();
+            prefs.sttModel = $('sttModel').value.trim();
+            savePrefs();
+
             clearError();
             showSuccess('設定を保存しました');
             setTimeout(function () { $('settingsPanel').classList.remove('active'); }, 500);
+        }
+
+        // 書き起こしの方法に合わせて、キー欄の出し入れと説明を切り替える
+        function applySttMode() {
+            var api = sttEnabled();
+            $('sttMode').value = prefs.sttMode;
+            $('sttGroup').style.display = api ? '' : 'none';
+            $('sttModeHint').textContent = api
+                ? '録音を止めると、音声を書き起こしサービスへ送って文字にします。長い録音は 4 分ごとに区切って送ります。'
+                : 'iPhone の音声認識をその場で使います。無料ですが、話し手が離れている場面では取りこぼしが増えます。';
         }
 
         function clearApiKey() {
@@ -1318,6 +1389,16 @@
             dot.className = 'recog-dot';
             box.classList.remove('warn');
 
+            // 録音して後から書き起こす方法（F-22）では、その場では文字にならない
+            if (sttEnabled()) {
+                dot.className = 'recog-dot hot';
+                var parts = ['録音しています'];
+                if (sttPending > 0) parts.push('書き起こし中 ' + sttPending + ' 件');
+                if (recogStats.chars) parts.push('ここまで ' + recogStats.chars + ' 文字');
+                text.textContent = parts.join(' / ') + '（停止すると書き起こします）';
+                return;
+            }
+
             if (since >= 0 && since < RECOG_HOT_MS) {
                 dot.className = 'recog-dot hot';
                 text.textContent = '声を認識しています（' + recogStats.chars + ' 文字）';
@@ -1348,9 +1429,15 @@
                 if (Object.prototype.hasOwnProperty.call(s.errors, k)) errs.push(k + ' ' + s.errors[k] + ' 回');
             }
             lines.push('エラー: ' + (errs.length ? errs.join(' / ') : 'なし'));
-            lines.push('波形: ' + (prefs.showWaveform ? '表示する（マイクを 2 つ開く）' : '表示しない（マイクは 1 つ）'));
+            lines.push('方法: ' + (sttEnabled() ? '録音して書き起こし API へ送る（' + sttModel() + '）'
+                                              : 'iPhone の音声認識'));
+            if (sttEnabled()) {
+                lines.push('送信待ち: ' + sttPending + ' 件 / 送れていない録音: ' + sttFailed.length + ' 件');
+            }
+            lines.push('波形: ' + (prefs.showWaveform ? '表示する' : '表示しない'));
             lines.push('起動: ' + (isStandalone ? 'ホーム画面アプリ' : 'ブラウザ') +
-                       ' / 認識: ' + (SpeechRecognitionCtor ? '利用可' : '利用不可'));
+                       ' / 認識: ' + (SpeechRecognitionCtor ? '利用可' : '利用不可') +
+                       ' / 録音: ' + (sttSupported() ? '利用可' : '利用不可'));
             el.textContent = lines.join('\n');
         }
 
@@ -1389,6 +1476,7 @@
         // 値がまったく動かない場合、本当に静かなだけのこともある。
         // 表示は無音の案内のままにして、長く続いたときだけ一度取り直す
         var WAVE_FROZEN_MS = 6000;
+        var waveShared = false;     // 録音（F-22）と同じマイクを使っているか
         var waveFrozenSince = 0;
         var waveFrozenRetried = false;
         var waveKeepTimers = false;    // 立て直しでは無音の計測をやり直さない
@@ -1421,6 +1509,35 @@
             var h = canvas.clientHeight || 72;
             canvas.width = Math.round(w * ratio);
             canvas.height = Math.round(h * ratio);
+        }
+
+        // 録音（F-22）で開いたマイクをそのまま使う。マイクは増やさない
+        function startWaveformFromStream(stream) {
+            if (!prefs.showWaveform || !waveSupported()) return;
+            try {
+                var Ctor = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new Ctor();
+                if (audioCtx.state === 'suspended') audioCtx.resume().catch(function () {});
+                var source = audioCtx.createMediaStreamSource(stream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                analyser.smoothingTimeConstant = 0.6;
+                source.connect(analyser);
+                waveBuf = new Uint8Array(analyser.fftSize);
+                waveHistory = [];
+                waveShared = true;      // このマイクは録音のもの。止めたり取り直したりしない
+                waveDeadSince = waveRevivedAt = waveFrozenSince = 0;
+                loudAt = waveStartedAt = Date.now();
+                waveHeard = false;
+                $('waveformWrap').classList.add('active');
+                setWaveNote('', false);
+                readWaveColors();
+                sizeWaveCanvas();
+                drawWave();
+            } catch (e) {
+                // 波形は諦める。録音は続ける
+                $('waveformWrap').classList.remove('active');
+            }
         }
 
         function startWaveform() {
@@ -1533,7 +1650,8 @@
             // 信号が途切れていたら立て直す。無音の案内より先に扱う
             if (dead) {
                 if (!waveDeadSince) waveDeadSince = now;
-                if (now - waveDeadSince > WAVE_DEAD_MS) reviveWaveform();
+                // 録音と共用しているマイクは、波形の都合で取り直さない（録音が切れるため）
+                if (!waveShared && now - waveDeadSince > WAVE_DEAD_MS) reviveWaveform();
                 return;
             }
             waveDeadSince = 0;
@@ -1547,7 +1665,7 @@
             // 表示は無音の案内のままにして、黙って一度だけマイクを取り直す
             if (frozen) {
                 if (!waveFrozenSince) waveFrozenSince = now;
-                if (!waveFrozenRetried && now - waveFrozenSince > WAVE_FROZEN_MS) {
+                if (!waveShared && !waveFrozenRetried && now - waveFrozenSince > WAVE_FROZEN_MS) {
                     waveFrozenRetried = true;
                     restartWaveform();
                     return;
@@ -1616,6 +1734,19 @@
         }
 
         function stopWaveform() {
+            if (waveShared) {
+                // マイクは録音側（F-22）が止める。ここでは描画だけ終える
+                waveShared = false;
+                if (waveRAF) { cancelAnimationFrame(waveRAF); waveRAF = null; }
+                if (audioCtx) { audioCtx.close().catch(function () {}); audioCtx = null; }
+                analyser = null;
+                waveBuf = null;
+                waveHistory = [];
+                waveHeard = false;
+                $('waveformWrap').classList.remove('active');
+                setWaveNote('', false);
+                return;
+            }
             if (waveRAF) { cancelAnimationFrame(waveRAF); waveRAF = null; }
             if (micStream) {
                 micStream.getTracks().forEach(function (t) { t.stop(); });
@@ -1700,16 +1831,23 @@
                 clearWorkspace();
             }
 
-            if (!recognition) recognition = buildRecognition();
             wantRecording = true;
             quickFailCount = 0;
             resetRecogStats();
+            sttAutoAfter = false;
+
+            if (sttEnabled()) {
+                // 録音して後から書き起こす（F-22）。マイクは 1 つだけ開き、波形と共用する
+                if (!startApiRecording()) { wantRecording = false; return; }
+            } else {
+                if (!recognition) recognition = buildRecognition();
+                // iOS ではユーザー操作と同じイベント内で start() を呼ぶ必要がある
+                safeStart();
+                // 波形はマイクをもう 1 つ開く（C-10）。表示する設定のときだけ開く。
+                // AudioContext も操作と同じイベント内で作る
+                startWaveform();
+            }
             requestWakeLock();
-            // iOS ではユーザー操作と同じイベント内で start() を呼ぶ必要がある
-            safeStart();
-            // 波形はマイクをもう 1 つ開くため、認識と取り合いになる（C-10）。
-            // 表示する設定のときだけ開く。AudioContext も操作と同じイベント内で作る
-            startWaveform();
             startRecogActivity();
             setRecordingUI(true);
             logRecordingStarted();
@@ -1718,10 +1856,13 @@
         // byUser: 利用者が「録音停止」を押した場合のみ true。
         // 画面切替やエラーによる停止では自動作成を始めない。
         function stopRecording(byUser) {
+            var wasApi = sttEnabled() && !!sttStream;
+            var flushing = false;
             wantRecording = false;
             clearTimeout(restartTimer);
             releaseWakeLock();
             stopWaveform();
+            if (wasApi) flushing = stopApiRecording();   // 最後の区間はここで送信に回る
             stopRecogActivity();
             if (recognition) {
                 try { recognition.stop(); } catch (e) { /* noop */ }
@@ -1729,7 +1870,27 @@
             setRecordingUI(false);
             saveDraftNow();
             logSnapshot({ endedAt: Date.now() });   // 録音区間もここで足される
+
+            if (wasApi) {
+                // 書き起こしが返るまで作成を始めない（途中の文で作らないため）
+                sttAutoAfter = !!byUser;
+                updateSttWaitNote();
+                // 最後の区間を書き出している最中なら、その onstop から送信に回る。
+                // ここで先に片付けると、まだ空の書き起こしで作成しようとしてしまう
+                if (!flushing) finishSttIfIdle();
+                return;
+            }
             if (byUser) scheduleAutoGenerate();
+        }
+
+        // 停止後、まだ書き起こしが返っていないことを画面に残す
+        function updateSttWaitNote() {
+            var box = $('recogActivity');
+            if (sttPending <= 0) { box.classList.remove('active'); return; }
+            box.classList.add('active');
+            box.classList.remove('warn');
+            $('recogDot').className = 'recog-dot hot';
+            $('recogActivityText').textContent = '書き起こしています…（残り ' + sttPending + ' 件）';
         }
 
         // 他アプリへ切り替わると iOS は認識を復帰できないため、いったん止める
@@ -1742,6 +1903,222 @@
                 }
             }
         });
+
+        /* ==================================================================
+         * F-22 録音して書き起こす（書き起こし API）
+         *
+         * iPhone の音声認識は近くでの口述向けで、外来のように話し手が離れて
+         * いる・複数いる場面では実用に届かない（R-14）。そこで、音声をその場で
+         * 録音し、区切りごとに書き起こし API へ送って文字にする方法を選べる。
+         *
+         * この方法では音声が端末の外へ出る。文字にした時点で音声は捨て、
+         * 端末にも保存しない。設定画面と README に明記する。
+         * ================================================================ */
+        var STT_DEFAULT_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
+        var STT_DEFAULT_MODEL = 'gpt-4o-transcribe';
+        var STT_SEGMENT_MS = 240000;              // 4 分ごとに区切って送る
+        var STT_MAX_BYTES = 24 * 1024 * 1024;     // 1 回の送信の上限
+        var STT_TIMEOUT_MS = 120000;
+        var STT_MIN_BYTES = 2000;                 // これ以下は無音の欠片として捨てる
+
+        var sttStream = null;        // 録音に使っているマイク（波形と共用する）
+        var mediaRecorder = null;
+        var mediaChunks = [];
+        var sttRotateTimer = null;
+        var sttPending = 0;          // 送信中の区間の数
+        var sttFailed = [];          // 送れなかった区間。再送信できるよう持っておく
+        var sttAutoAfter = false;    // 書き起こしが終わったら自動作成に進むか
+
+        function sttEnabled() { return prefs.sttMode === 'api'; }
+
+        function sttKey() {
+            // 保存できない端末でも動くよう、入力欄を優先して見る
+            return ($('sttKey').value || '').trim() || (storage.get(KEY_STT) || '').trim();
+        }
+
+        function sttEndpoint() { return (prefs.sttEndpoint || '').trim() || STT_DEFAULT_ENDPOINT; }
+        function sttModel() { return (prefs.sttModel || '').trim() || STT_DEFAULT_MODEL; }
+
+        function sttSupported() {
+            return !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        }
+
+        // iOS は audio/mp4、その他は webm を返すことが多い
+        function recorderMime() {
+            if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+            var list = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+            for (var i = 0; i < list.length; i++) {
+                if (MediaRecorder.isTypeSupported(list[i])) return list[i];
+            }
+            return '';
+        }
+
+        function startApiRecording() {
+            if (!sttSupported()) {
+                showError('この端末では録音できません。\n設定の「書き起こしの方法」を「iPhone の音声認識」に戻してください。');
+                return false;
+            }
+            if (!sttKey()) {
+                showError('書き起こし用の API キーを設定してください（歯車アイコン）。');
+                return false;
+            }
+            navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            }).then(function (stream) {
+                if (!wantRecording) {          // 待っている間に止められた
+                    stream.getTracks().forEach(function (t) { t.stop(); });
+                    return;
+                }
+                sttStream = stream;
+                startWaveformFromStream(stream);
+                beginSegment();
+            }).catch(function () {
+                wantRecording = false;
+                setRecordingUI(false);
+                stopRecogActivity();
+                releaseWakeLock();
+                showError('マイクを使用できませんでした。\n・「設定」→「Safari」→「マイク」を「許可」\n・他のアプリがマイクを使っていないか確認してください');
+            });
+            return true;
+        }
+
+        function beginSegment() {
+            if (!wantRecording || !sttStream) return;
+            var mime = recorderMime();
+            try {
+                mediaRecorder = mime ? new MediaRecorder(sttStream, { mimeType: mime })
+                                     : new MediaRecorder(sttStream);
+            } catch (e) {
+                showError('録音を開始できませんでした。設定の「書き起こしの方法」を戻してお試しください。');
+                stopRecording(false);
+                return;
+            }
+            mediaChunks = [];
+            mediaRecorder.ondataavailable = function (e) {
+                if (e.data && e.data.size) mediaChunks.push(e.data);
+            };
+            mediaRecorder.onstop = function () {
+                var type = (mediaChunks[0] && mediaChunks[0].type) || mime || 'audio/webm';
+                var blob = new Blob(mediaChunks, { type: type });
+                mediaChunks = [];
+                if (blob.size >= STT_MIN_BYTES) sendForTranscription(blob);
+                if (wantRecording) beginSegment();     // 続きを録り続ける
+                else finishSttIfIdle();
+            };
+            mediaRecorder.start();
+            clearTimeout(sttRotateTimer);
+            // 長い録音は区切って送る。1 回の上限に収め、途中でも文字が出るように
+            sttRotateTimer = setTimeout(function () {
+                if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+            }, STT_SEGMENT_MS);
+        }
+
+        // 戻り値: 最後の区間の書き出しを待つ必要があるか（onstop で送信に回る）
+        function stopApiRecording() {
+            clearTimeout(sttRotateTimer);
+            sttRotateTimer = null;
+            var flushing = false;
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                try { mediaRecorder.stop(); flushing = true; } catch (e) { /* noop */ }
+            }
+            mediaRecorder = null;
+            if (sttStream) {
+                sttStream.getTracks().forEach(function (t) { t.stop(); });
+                sttStream = null;
+            }
+            return flushing;
+        }
+
+        function sendForTranscription(blob) {
+            if (blob.size > STT_MAX_BYTES) {
+                showError('録音が長すぎて送信できませんでした（' + Math.round(blob.size / 1048576) + 'MB）。');
+                return;
+            }
+            sttPending++;
+            updateRecogActivity();
+
+            var form = new FormData();
+            var ext = blob.type.indexOf('mp4') >= 0 ? 'm4a' : 'webm';
+            form.append('file', blob, 'audio.' + ext);
+            form.append('model', sttModel());
+            form.append('language', 'ja');
+
+            var ctrl = window.AbortController ? new AbortController() : null;
+            var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, STT_TIMEOUT_MS) : null;
+
+            fetch(sttEndpoint(), {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + sttKey() },
+                body: form,
+                signal: ctrl ? ctrl.signal : undefined
+            }).then(function (res) {
+                clearTimeout(timer);
+                if (!res.ok) {
+                    return res.text().then(function (t) { throw new Error(sttErrorMessage(res.status, t)); });
+                }
+                return res.json();
+            }).then(function (data) {
+                var text = (data && (data.text || data.transcript)) || '';
+                if (text) {
+                    recogStats.finals++;
+                    recogStats.chars += text.length;
+                    recogStats.lastResultAt = Date.now();
+                    appendTranscript(text);
+                }
+                clearError();
+                sttDone();
+            }).catch(function (e) {
+                clearTimeout(timer);
+                // 送れなかった音声は捨てずに持っておき、再送信できるようにする
+                sttFailed.push(blob);
+                countRecogError('stt');
+                showError('書き起こしに失敗しました。\n' + ((e && e.message) || '') +
+                          '\n録音は残っています。「再送信」でもう一度送れます。');
+                sttDone();
+            });
+        }
+
+        function sttErrorMessage(status, body) {
+            if (status === 401 || status === 403) return '書き起こし用の API キーが正しくないようです（' + status + '）。';
+            if (status === 429) return '書き起こしサービスの利用上限に達しました（429）。少し待ってから再送信してください。';
+            if (status >= 500) return '書き起こしサービスが応答しません（' + status + '）。';
+            var detail = String(body || '').slice(0, 200);
+            return '書き起こしサービスがエラーを返しました（' + status + '）。' + (detail ? '\n' + detail : '');
+        }
+
+        function sttDone() {
+            sttPending = Math.max(0, sttPending - 1);
+            if (wantRecording) updateRecogActivity(); else updateSttWaitNote();
+            renderSttRetry();
+            finishSttIfIdle();
+        }
+
+        // 送信が全部終わってから自動作成に進む（途中の書き起こしで作らない）
+        function finishSttIfIdle() {
+            if (wantRecording || sttPending > 0) return;
+            saveDraftNow();
+            logSnapshot({});
+            if (sttAutoAfter) {
+                sttAutoAfter = false;
+                scheduleAutoGenerate();
+            }
+        }
+
+        function renderSttRetry() {
+            var box = $('sttRetry');
+            if (!sttFailed.length) { box.classList.remove('active'); return; }
+            $('sttRetryText').textContent = '送れていない録音が ' + sttFailed.length + ' 件あります';
+            box.classList.add('active');
+        }
+
+        function retryFailedTranscriptions() {
+            if (!sttFailed.length) return;
+            if (!sttKey()) { showError('書き起こし用の API キーを設定してください（歯車アイコン）。'); return; }
+            var list = sttFailed.slice();
+            sttFailed = [];
+            renderSttRetry();
+            for (var i = 0; i < list.length; i++) sendForTranscription(list[i]);
+        }
 
         /* ==================================================================
          * 録音停止後の自動作成
@@ -2189,6 +2566,9 @@
             pendingSegmentStart = 0;
             templateChangedForSession = false;
             sessionCompleted = false;
+            // 前の記録の、送れなかった音声は持ち越さない
+            sttFailed = [];
+            renderSttRetry();
             $('transcriptionText').value = '';
             $('interimText').textContent = '';
             $('notes').value = '';
@@ -3653,6 +4033,23 @@
             $('settingsToggle').addEventListener('click', toggleSettings);
             $('saveSettingsBtn').addEventListener('click', saveSettings);
             $('clearKeyBtn').addEventListener('click', clearApiKey);
+
+            $('sttMode').addEventListener('change', function () {
+                if (wantRecording) {
+                    // 録音中に方式を変えると、録れているものと合わなくなる
+                    this.value = prefs.sttMode;
+                    showError('録音中は書き起こしの方法を変えられません。録音を止めてから変更してください。');
+                    return;
+                }
+                prefs.sttMode = this.value === 'api' ? 'api' : 'device';
+                savePrefs();
+                applySttMode();
+                renderRecogStats();
+                if (sttEnabled() && !sttKey()) {
+                    showSuccess('書き起こし用の API キーを入力して「保存」してください');
+                }
+            });
+            $('sttRetryBtn').addEventListener('click', retryFailedTranscriptions);
 
             $('autoGenerate').addEventListener('change', function () {
                 prefs.autoGenerate = this.checked;
