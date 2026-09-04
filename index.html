@@ -269,6 +269,38 @@
 
         .waveform-note.warn { color: var(--notice-fg); font-weight: 500; }
 
+        /* 外付けマイクの案内（F-26）。録音していないときだけ出す */
+        .mic-offer {
+            display: none;
+            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 10px;
+            background-color: var(--surface);
+            border: 1px solid var(--primary);
+        }
+        .mic-offer.active { display: block; }
+        .mic-offer-text {
+            display: block;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.5;
+            color: var(--gray-900);
+        }
+        .mic-offer-note {
+            margin: 4px 0 0;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--gray-700);
+        }
+        .mic-offer-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .mic-offer-actions button { margin-top: 0; flex: 0 0 auto; }
+        .mic-offer-actions button[disabled] { opacity: 0.6; }
+
         /* マイクをつなぎ直すボタン（F-25）。録音中だけ出す */
         .mic-reset {
             display: none;
@@ -883,6 +915,17 @@
                 </div>
                 <button type="button" class="btn-clear btn-small" id="newSessionBtn">＋ 新規</button>
             </div>
+            <!-- F-26 外付けマイクの案内。起動のたびに、使えるマイクがあれば出す -->
+            <div class="mic-offer" id="micOffer">
+                <div class="mic-offer-body">
+                    <span class="mic-offer-text" id="micOfferText"></span>
+                    <p class="mic-offer-note" id="micOfferNote"></p>
+                </div>
+                <div class="mic-offer-actions">
+                    <button type="button" class="btn-clear btn-small" id="micOfferBtn">このマイクを使う</button>
+                    <button type="button" class="btn-clear btn-small" id="micOfferLater">あとで</button>
+                </div>
+            </div>
             <button type="button" class="btn-primary" id="recordBtn">🎤 録音開始</button>
             <div class="recording-indicator" id="recordingIndicator">
                 <span class="pulse"></span>
@@ -1213,7 +1256,8 @@
             $('sttModeHint').textContent = api
                 ? '録音を止めると、音声を書き起こしサービスへ送って文字にします。長い録音は 4 分ごとに区切って送ります。'
                 : 'iPhone の音声認識をその場で使います。無料ですが、話し手が離れている場面では取りこぼしが増えます。';
-            renderMicHint();   // マイクを選べるかは方法によって変わる（F-23）
+            renderMicHint();    // マイクを選べるかは方法によって変わる（F-23）
+            renderMicOffer();   // 案内の注意書きも方法によって変わる（F-26）
         }
 
         function clearApiKey() {
@@ -1439,6 +1483,7 @@
                 $('interimText').textContent = '';
             }
             setMicResetUI(active, reconnecting);   // 録音中だけ「つなぎ直す」を出す
+            renderMicOffer();                      // 外付けマイクの案内は録音中は引っ込める
         }
 
         /* ------------------------------------------------------------------
@@ -1669,6 +1714,129 @@
             return 'マイク ' + (i + 1) + '（名前は許可後に出ます）';
         }
 
+        /* ------------------------------------------------------------------
+         * F-26 外付けマイクの案内
+         *
+         * Bluetooth の接続そのものは iOS の「設定 → Bluetooth」でしかできない
+         * （Web アプリからは機器の接続も切断もできない）。アプリ側でできるのは、
+         * すでに繋がっている機器を見つけて、1 タップで「これを使う」状態にすること。
+         * 起動のたびに調べ、使えるマイクがあれば録音ボタンの上に出す。
+         * ------------------------------------------------------------------ */
+        var micOfferHidden = false;   // 「あとで」。この起動の間だけ隠す
+        var micOfferMode = '';        // '' | 'check' | 'use' | 'missing'
+        var micOfferTarget = null;    // 'use' のときに選ぶ機器
+
+        // 端末に内蔵のマイクかどうか。名前でしか区別できない
+        function builtInMicLabel(label) {
+            return /iPhone|iPad|iPod|MacBook|Mac\b|内蔵|本体|built-?in/i.test(label || '');
+        }
+
+        // 名前が分かっていて、内蔵ではないもの＝外付け（Bluetooth・有線）
+        function externalMics() {
+            var out = [];
+            for (var i = 0; i < micDevices.length; i++) {
+                var d = micDevices[i];
+                if (!d.deviceId || d.deviceId === 'default') continue;
+                if (!d.label || builtInMicLabel(d.label)) continue;
+                out.push(d);
+            }
+            return out;
+        }
+
+        // 名前は一度マイクを許可するまで空になる（C-12 の一覧と同じ事情）
+        function micLabelsKnown() {
+            for (var i = 0; i < micDevices.length; i++) {
+                if (micDevices[i].label) return true;
+            }
+            return false;
+        }
+
+        function micIsPresent(id) {
+            for (var i = 0; i < micDevices.length; i++) {
+                if (micDevices[i].deviceId === id) return true;
+            }
+            return false;
+        }
+
+        function renderMicOffer() {
+            var box = $('micOffer');
+            if (!box) return;
+            var show = function (mode, text, note, btn) {
+                micOfferMode = mode;
+                $('micOfferText').textContent = text;
+                $('micOfferNote').textContent = note;
+                $('micOfferBtn').textContent = btn;
+                $('micOfferBtn').disabled = false;
+                box.classList.add('active');
+            };
+            var hide = function () { micOfferMode = ''; box.classList.remove('active'); };
+
+            // 録音中は「つなぎ直す」（F-25）が主役なので出さない
+            if (!micSelectable() || micOfferHidden || wantRecording) { hide(); return; }
+
+            if (prefs.micDeviceId) {
+                if (micIsPresent(prefs.micDeviceId)) { hide(); return; }   // すでに使う設定
+                if (micLabelsKnown()) {
+                    show('missing',
+                        '🎧 ' + (prefs.micLabel || '選んだマイク') + ' が見つかりません',
+                        'いまは端末のマイクで録音します。使うなら iPhone の「設定 → Bluetooth」で' +
+                        'つなぎ直してから、下のボタンで調べ直してください。',
+                        '調べ直す');
+                    return;
+                }
+            }
+
+            if (!micLabelsKnown()) {
+                show('check',
+                    '🎧 外付けマイクを使いますか',
+                    'Bluetooth のマイクは iPhone の「設定 → Bluetooth」で接続してから、ここで選びます。' +
+                    '名前を出すために、一度だけマイクの許可が要ります。',
+                    'つながっているマイクを調べる');
+                return;
+            }
+
+            var ext = externalMics();
+            if (!ext.length) { hide(); return; }
+            micOfferTarget = ext[0];
+            show('use',
+                '🎧 ' + ext[0].label + ' が使えます' + (ext.length > 1 ? '（ほか ' + (ext.length - 1) + ' 件）' : ''),
+                sttEnabled()
+                    ? 'このマイクで録音します。あとから設定の「使うマイク」で変えられます。'
+                    : '⚠️ いまの「iPhone の音声認識」では、アプリからマイクを指定できません。' +
+                      'この機器を確実に使うには、設定で「録音して書き起こし API へ送る」を選んでください。',
+                'このマイクを使う');
+        }
+
+        function useOfferedMic() {
+            if (!micOfferTarget) return;
+            prefs.micDeviceId = micOfferTarget.deviceId;
+            prefs.micLabel = micOfferTarget.label || '';
+            savePrefs();
+            renderMicOptions();      // 一覧・注意書き・案内をまとめて作り直す
+            renderRecogStats();
+            showSuccess((prefs.micLabel || '選んだマイク') + ' を使います');
+        }
+
+        function clearOfferedMic() {
+            prefs.micDeviceId = '';
+            prefs.micLabel = '';
+            savePrefs();
+            renderMicOptions();
+            renderRecogStats();
+        }
+
+        function checkForMics() {
+            $('micOfferBtn').disabled = true;
+            $('micOfferBtn').textContent = '調べています…';
+            refreshMicList(true).then(function () {
+                renderMicOffer();
+                if (!externalMics().length) {
+                    showSuccess('外付けのマイクは見つかりませんでした。' +
+                                'iPhone の「設定 → Bluetooth」で接続してから、もう一度お試しください');
+                }
+            });
+        }
+
         // 一覧を作る。名前は一度マイクを許可しないと空になる（ブラウザの仕様）
         function refreshMicList(unlock) {
             if (!micSelectable()) { renderMicOptions(); return Promise.resolve(); }
@@ -1721,6 +1889,7 @@
             }
             sel.value = prefs.micDeviceId || '';
             renderMicHint();
+            renderMicOffer();
         }
 
         function renderMicHint() {
@@ -4433,9 +4602,21 @@
             if (micSelectable() && navigator.mediaDevices.addEventListener) {
                 // Bluetooth のマイクを繋いだ・外したときに一覧を作り直す
                 navigator.mediaDevices.addEventListener('devicechange', function () {
+                    // 使えるマイクが増えたら、隠していても改めて案内する（F-26）
+                    micOfferHidden = false;
                     refreshMicList(false);
                 });
             }
+
+            $('micOfferBtn').addEventListener('click', function () {
+                if (micOfferMode === 'use') useOfferedMic();
+                else if (micOfferMode === 'missing') { clearOfferedMic(); checkForMics(); }
+                else checkForMics();
+            });
+            $('micOfferLater').addEventListener('click', function () {
+                micOfferHidden = true;      // 次に起動したらまた出す
+                renderMicOffer();
+            });
 
             $('autoGenerate').addEventListener('change', function () {
                 prefs.autoGenerate = this.checked;
