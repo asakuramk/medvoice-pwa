@@ -269,6 +269,24 @@
 
         .waveform-note.warn { color: var(--notice-fg); font-weight: 500; }
 
+        /* マイクをつなぎ直すボタン（F-25）。録音中だけ出す */
+        .mic-reset {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .mic-reset.active { display: flex; }
+        .mic-reset button { margin-top: 0; flex: 0 0 auto; }
+        .mic-reset button[disabled] { opacity: 0.6; }
+        .mic-reset-hint {
+            flex: 1 1 160px;
+            font-size: 12px;
+            line-height: 1.5;
+            color: var(--gray-700);
+        }
+
         /* 波形を自動で止めたときの案内（F-24） */
         .wave-blocked {
             display: none;
@@ -882,6 +900,11 @@
                 <span id="sttRetryText"></span>
                 <button type="button" class="btn-clear btn-small" id="sttRetryBtn">再送信</button>
             </div>
+            <!-- F-25 マイクをつなぎ直す（Bluetooth の抜き差しなどで音が来なくなったとき） -->
+            <div class="mic-reset" id="micReset">
+                <button type="button" class="btn-clear btn-small" id="micResetBtn">🔄 マイクをつなぎ直す</button>
+                <span class="mic-reset-hint">波形も文字も出ないときに押してください。書き起こしは消えません</span>
+            </div>
             <div class="interim-text" id="interimText"></div>
             <div class="auto-countdown" id="autoCountdown">
                 <span id="autoCountdownText"></span>
@@ -1238,7 +1261,8 @@
         function resetRecogStats() {
             recogStats = {
                 startedAt: Date.now(), starts: 0, ends: 0, finals: 0, chars: 0,
-                noSpeech: 0, errors: {}, lastError: '', lastErrorAt: 0, lastResultAt: 0
+                noSpeech: 0, errors: {}, lastError: '', lastErrorAt: 0, lastResultAt: 0,
+                reconnects: 0
             };
         }
         resetRecogStats();
@@ -1328,6 +1352,7 @@
                     setRecordingUI(false);
                     return;
                 }
+                if (reconnecting) return;   // つなぎ直し中。開き直してから始める（F-25）
                 // iOS の自動停止 → 自動で再開する
                 if (Date.now() - sessionStartedAt < 1000) {
                     quickFailCount++;
@@ -1404,7 +1429,8 @@
             if (active) {
                 btn.textContent = '🛑 録音停止';
                 btn.classList.add('btn-recording');
-                $('recordingLabel').textContent = '録音中...';
+                // つなぎ直しの最中は、その旨の表示を消さない（F-25）
+                if (!reconnecting) $('recordingLabel').textContent = '録音中...';
                 $('recordingIndicator').classList.add('active');
             } else {
                 btn.textContent = '🎤 録音開始';
@@ -1412,6 +1438,7 @@
                 $('recordingIndicator').classList.remove('active');
                 $('interimText').textContent = '';
             }
+            setMicResetUI(active, reconnecting);   // 録音中だけ「つなぎ直す」を出す
         }
 
         /* ------------------------------------------------------------------
@@ -1518,7 +1545,7 @@
             var mins = Math.max(0, Math.round((Date.now() - s.startedAt) / 1000));
             lines.push('経過: ' + mins + ' 秒 / 認識の開始 ' + s.starts + ' 回 / 終了 ' + s.ends + ' 回');
             lines.push('確定した文: ' + s.finals + ' 件 / ' + s.chars + ' 文字');
-            lines.push('無音での終了: ' + s.noSpeech + ' 回');
+            lines.push('無音での終了: ' + s.noSpeech + ' 回 / マイクのつなぎ直し: ' + (s.reconnects || 0) + ' 回');
             var errs = [];
             for (var k in s.errors) {
                 if (Object.prototype.hasOwnProperty.call(s.errors, k)) errs.push(k + ' ' + s.errors[k] + ' 回');
@@ -1631,6 +1658,9 @@
         function rememberActiveMic(stream) {
             var track = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
             micActiveLabel = (track && track.label) || '';
+            // 機器が外れると ended が届く。stop() では発火しないので、
+            // ここへ来るのは Bluetooth の切断など経路が変わった場合だけ（F-25）
+            if (track) track.addEventListener('ended', onMicTrackEnded);
             renderRecogStats();
         }
 
@@ -2075,6 +2105,8 @@
             quickFailCount = 0;
             resetRecogStats();
             sttAutoAfter = false;
+            reconnecting = false;
+            autoReconnected = false;
 
             if (sttEnabled()) {
                 // 録音して後から書き起こす（F-22）。マイクは 1 つだけ開き、波形と共用する
@@ -2093,12 +2125,103 @@
             logRecordingStarted();
         }
 
+        /* ------------------------------------------------------------------
+         * F-25 マイクをつなぎ直す
+         *
+         * Bluetooth のマイクが繋がる・切れる、有線を抜き差しするなどで音の経路が
+         * 変わると、iOS では開いていたトラックがそのまま死に、波形も認識も戻らない
+         * ことがある。録音を止めて入力をやり直せば直るが、それでは書き起こしが
+         * 途切れてしまう。そこで、録音とセッションはそのままに、マイクと認識だけを
+         * 開き直す手段を用意する。手で押すボタンと、トラックが切れたときの自動実行。
+         * ------------------------------------------------------------------ */
+        var MIC_REOPEN_MS = 500;       // 経路が切り替わるのを待つ
+        var reconnecting = false;
+        var autoReconnected = false;   // 自動での取り直しは 1 セッションに 1 回まで
+
+        function setMicResetUI(active, busy) {
+            var box = $('micReset'), btn = $('micResetBtn');
+            if (!box) return;
+            if (active) box.classList.add('active');
+            else box.classList.remove('active');
+            btn.disabled = !!busy;
+            btn.textContent = busy ? '🔄 つなぎ直しています…' : '🔄 マイクをつなぎ直す';
+        }
+
+        function reconnectMic(note) {
+            if (!wantRecording || reconnecting) return false;
+            reconnecting = true;
+            recogStats.reconnects++;
+            setMicResetUI(true, true);
+            $('recordingLabel').textContent = '録音中...（マイクをつなぎ直しています）';
+            if (note) showSuccess(note);
+
+            if (sttEnabled()) {
+                // いま録っている区間は送信に回し、新しいマイクで続きを録る。
+                // 世代を進めて、止めた区間から自動で録り直されないようにする
+                sttGen++;
+                stopApiRecording();
+                stopWaveform();
+            } else {
+                stopWaveform();               // 波形のマイクを手放す
+                clearTimeout(restartTimer);
+                // 認識も開き直す。onend からの自動再開は下で改めて呼ぶので止めておく
+                if (recognition) {
+                    try { recognition.abort(); } catch (e) { /* noop */ }
+                }
+            }
+
+            setTimeout(function () {
+                if (!wantRecording) { reconnecting = false; setMicResetUI(false, false); return; }
+                refreshMicList(false);        // つないだ機器を一覧に反映する
+                if (sttEnabled()) {
+                    openMicrophone().then(function (stream) {
+                        if (!wantRecording) {
+                            stream.getTracks().forEach(function (t) { t.stop(); });
+                            return;
+                        }
+                        attachApiStream(stream);
+                        finishReconnect(true);
+                    }).catch(function () {
+                        finishReconnect(false);
+                        showError('マイクを開き直せませんでした。\n' +
+                                  '録音を止めて、もう一度「録音開始」を押してください。');
+                    });
+                } else {
+                    safeStart();              // 認識を始め直す
+                    startWaveform();          // 波形は設定と F-24 の判断に従う
+                    finishReconnect(true);
+                }
+            }, MIC_REOPEN_MS);
+            return true;
+        }
+
+        function finishReconnect(ok) {
+            reconnecting = false;
+            setMicResetUI(!!wantRecording, false);
+            if (wantRecording) $('recordingLabel').textContent = '録音中...';
+            if (ok) {
+                // 取り直した直後は無音の判定をやり直す
+                recogStats.lastResultAt = 0;
+                recogStats.startedAt = Date.now();
+                updateRecogActivity();
+            }
+            renderRecogStats();
+        }
+
+        // 機器が外れたとき（Bluetooth の切断など）に一度だけ自動で取り直す
+        function onMicTrackEnded() {
+            if (!wantRecording || reconnecting || autoReconnected) return;
+            autoReconnected = true;
+            reconnectMic('マイクが切り替わったため、つなぎ直しています');
+        }
+
         // byUser: 利用者が「録音停止」を押した場合のみ true。
         // 画面切替やエラーによる停止では自動作成を始めない。
         function stopRecording(byUser) {
-            var wasApi = sttEnabled() && !!sttStream;
+            var wasApi = sttEnabled() && (!!sttStream || sttPending > 0);
             var flushing = false;
             wantRecording = false;
+            reconnecting = false;
             clearTimeout(restartTimer);
             releaseWakeLock();
             stopWaveform();
@@ -2162,6 +2285,7 @@
         var STT_MIN_BYTES = 2000;                 // これ以下は無音の欠片として捨てる
 
         var sttStream = null;        // 録音に使っているマイク（波形と共用する）
+        var sttGen = 0;              // 録音区間の世代。つなぎ直しで古い区間を無効にする（F-25）
         var mediaRecorder = null;
         var mediaChunks = [];
         var sttRotateTimer = null;
@@ -2207,9 +2331,7 @@
                     stream.getTracks().forEach(function (t) { t.stop(); });
                     return;
                 }
-                sttStream = stream;
-                startWaveformFromStream(stream);
-                beginSegment();
+                attachApiStream(stream);
             }).catch(function () {
                 wantRecording = false;
                 setRecordingUI(false);
@@ -2220,8 +2342,16 @@
             return true;
         }
 
+        // 開けたマイクを録音（と波形）に繋ぐ。つなぎ直し（F-25）でも同じ経路を通る
+        function attachApiStream(stream) {
+            sttStream = stream;
+            startWaveformFromStream(stream);
+            beginSegment();
+        }
+
         function beginSegment() {
             if (!wantRecording || !sttStream) return;
+            var gen = ++sttGen;        // この区間の世代（F-25）
             var mime = recorderMime();
             try {
                 mediaRecorder = mime ? new MediaRecorder(sttStream, { mimeType: mime })
@@ -2240,6 +2370,8 @@
                 var blob = new Blob(mediaChunks, { type: type });
                 mediaChunks = [];
                 if (blob.size >= STT_MIN_BYTES) sendForTranscription(blob);
+                // つなぎ直しで置き換わった区間。ここから録り続けない（F-25）
+                if (gen !== sttGen) return;
                 if (wantRecording) beginSegment();     // 続きを録り続ける
                 else finishSttIfIdle();
             };
@@ -4405,6 +4537,9 @@
             });
             $('newSessionBtn').addEventListener('click', startNewSession);
             $('recordBtn').addEventListener('click', toggleRecording);
+            $('micResetBtn').addEventListener('click', function () {
+                reconnectMic('マイクをつなぎ直しています…');
+            });
             $('cancelAutoBtn').addEventListener('click', function () { cancelAutoGenerate(true); });
             $('transcriptionText').addEventListener('input', onEditInput);
             $('notes').addEventListener('input', onEditInput);
