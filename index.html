@@ -269,6 +269,19 @@
 
         .waveform-note.warn { color: var(--notice-fg); font-weight: 500; }
 
+        /* 波形を自動で止めたときの案内（F-24） */
+        .wave-blocked {
+            display: none;
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background-color: var(--notice-bg);
+            border: 1px solid var(--notice-br);
+        }
+        .wave-blocked.active { display: block; }
+        .wave-blocked .info-text { color: var(--notice-fg); margin: 0 0 6px; }
+        .wave-blocked button { margin-top: 0; }
+
         /* 認識の状態表示（マイクを 2 重に開かないための、波形の代わり） */
         .recog-activity {
             display: none;
@@ -737,8 +750,19 @@
                             そのため聞き取りに影響することがありますが、<strong>良くなるか悪くなるかは端末や場所によって変わります。</strong>
                             うまく聞き取れないときは、<strong>この設定を切り替えて同じ場面で試し</strong>、
                             下の「マイクと認識の状態」の文字数を見比べてください。
-                            どちらの設定でも、認識できているかは文字で表示します。
+                            どちらの設定でも、認識できているかは文字で表示します。<br>
+                            波形は音を拾えているのに文字がまったく出ない場合は、
+                            <strong>波形のほうを自動で止めて</strong>録音を続けます。
                         </p>
+                        <div class="wave-blocked" id="waveBlockNote">
+                            <p class="info-text">
+                                <strong>この端末では波形を止めています。</strong>
+                                波形は音を拾えているのに文字が出なかったため、
+                                波形用のマイクが聞き取りを妨げていると判断しました。
+                                次に録音するときも波形は出ません。
+                            </p>
+                            <button type="button" class="btn-clear btn-small" id="waveRetryBtn">波形をもう一度試す</button>
+                        </div>
                     </div>
                 </div>
 
@@ -955,8 +979,11 @@
         // 端末や環境によって聞き取りへの影響が変わる（C-10）。どちらが良いかは
         // 実機で試すしかないので、既定は従来どおり表示する側に置き、切り替えられるようにする。
         // waveChoiceByUser: 利用者が自分で切り替えたか。既定を変える移行で上書きしないため。
+        // waveBlockedByApp: 波形のマイクが聞き取りを妨げていると分かったため、アプリ側で
+        // 波形を止めたか（F-24）。この端末では次回以降も止めたままにする。設定から戻せる。
         var prefs = { autoGenerate: true, autoSaveDraft: true, hideInstallHint: false, usedBefore: false,
-                      showWaveform: true, micPriorityApplied: false, waveChoiceByUser: false };
+                      showWaveform: true, micPriorityApplied: false, waveChoiceByUser: false,
+                      waveBlockedByApp: false };
         // 文字列・数値の設定は真偽値と別に扱う（loadPrefs が !! で潰さないように）
         prefs.template = 'soap';
         prefs.glossary = '';          // よく使う語（用語集）。1 行に 1 語
@@ -1080,12 +1107,32 @@
             $('autoGenerate').checked = prefs.autoGenerate;
             $('autoSaveDraft').checked = prefs.autoSaveDraft;
             $('showWaveform').checked = prefs.showWaveform;
+            waveformBlocked = !!prefs.waveBlockedByApp;   // 前回この端末で競合が分かっている（F-24）
+            renderWaveBlockNote();
             $('glossary').value = prefs.glossary;
             updateGlossaryCount();
             $('retention').value = String(prefs.retentionDays);
             // 知らない値が入っていた場合は既定に戻す
             if (!$('retention').value) { prefs.retentionDays = 30; $('retention').value = '30'; }
             $('autoDelayLabel').textContent = String(AUTO_GENERATE_DELAY_MS / 1000);
+        }
+
+        // 波形を自動で止めていることを設定画面に出す（F-24）
+        function renderWaveBlockNote() {
+            var box = $('waveBlockNote');
+            if (!box) return;
+            if (prefs.showWaveform && waveformBlocked) box.classList.add('active');
+            else box.classList.remove('active');
+        }
+
+        // 「波形をもう一度試す」。場所や機材が変われば結果も変わるため、いつでも戻せる
+        function unblockWaveform() {
+            waveformBlocked = false;
+            prefs.waveBlockedByApp = false;
+            savePrefs();
+            renderWaveBlockNote();
+            if (wantRecording && prefs.showWaveform) startWaveform();
+            renderRecogStats();
         }
 
         function updateGlossaryCount() {
@@ -1260,14 +1307,10 @@
                 } else if (err === 'network') {
                     showError('音声認識サーバーに接続できませんでした。通信環境を確認してください。');
                 } else if (err === 'audio-capture') {
-                    if (micStream && !waveformBlocked) {
+                    if (micStream && !waveShared && !waveformBlocked) {
                         // 波形用に開いたマイクが競合した可能性がある。
-                        // 波形を諦めて、そのまま録音を続ける
-                        waveformBlocked = true;
-                        stopWaveform();
-                        showSuccess('波形の表示を止めて録音を続けます');
-                        clearTimeout(restartTimer);
-                        restartTimer = setTimeout(safeStart, 300);
+                        // 波形を諦めて、そのまま録音を続ける（F-24）
+                        blockWaveformForRecognition('波形の表示を止めて録音を続けます');
                     } else {
                         wantRecording = false;
                         showError('マイクが見つかりません。他のアプリがマイクを使用していないか確認してください。');
@@ -1395,8 +1438,46 @@
             $('recogActivity').classList.remove('active');
         }
 
+        /* F-24: 波形のマイクと聞き取りの取り合いを見つけて、波形のほうを止める。
+         *
+         * 実機で「波形は出ているのに文字が出ない。録音し直すと波形が出ずに文字は出る」
+         * という状態が起きた。波形が音を拾えている＝マイクには音が届いているのに、
+         * 認識だけが何も返さないときは、波形用に開いた 2 つめのマイクが原因の可能性が高い。
+         * その場合だけ波形を諦め、認識を取り直す。判断がついた端末では次回以降も止めておく。 */
+        var RECOG_STARVE_MS = 12000;   // 波形は音を拾えているのに、認識が何も返さない時間
+
+        function waveMayStarveRecog() {
+            if (sttEnabled() || waveformBlocked) return false;
+            if (!micStream || waveShared) return false;   // 波形が別のマイクを開いているときだけ
+            if (recogStats.lastResultAt) return false;    // 一度でも文字が届いていれば競合ではない
+            if (!waveHeard) return false;                 // 波形も音を拾えていない＝マイクの向きの問題
+            if (!recogStats.starts) return false;         // 認識がまだ始まっていない
+            return Date.now() - recogStats.startedAt > RECOG_STARVE_MS;
+        }
+
+        function blockWaveformForRecognition(note) {
+            waveformBlocked = true;
+            prefs.waveBlockedByApp = true;
+            savePrefs();
+            stopWaveform();
+            renderWaveBlockNote();
+            renderRecogStats();
+            showSuccess(note);
+            // マイクが 1 つになった状態で認識を始め直す
+            clearTimeout(restartTimer);
+            if (recognizing) {
+                try { recognition.abort(); } catch (e) { /* onend から再開する */ }
+            } else {
+                restartTimer = setTimeout(safeStart, 300);
+            }
+        }
+
         function updateRecogActivity() {
             if (!wantRecording) { stopRecogActivity(); return; }
+            if (waveMayStarveRecog()) {
+                blockWaveformForRecognition('波形を出すと声を拾えないため、波形を止めて録音を続けます');
+                return;
+            }
             var dot = $('recogDot'), box = $('recogActivity'), text = $('recogActivityText');
             var since = recogStats.lastResultAt ? Date.now() - recogStats.lastResultAt : -1;
 
@@ -1450,7 +1531,9 @@
             }
             lines.push('マイク: ' + (prefs.micDeviceId ? '選択（' + (prefs.micLabel || '名前なし') + '）' : '端末の既定') +
                        (micActiveLabel ? ' / 使用中: ' + micActiveLabel : ''));
-            lines.push('波形: ' + (prefs.showWaveform ? '表示する' : '表示しない'));
+            lines.push('波形: ' + (prefs.showWaveform
+                ? (waveformBlocked ? '表示する（聞き取りと競合したため自動で停止中）' : '表示する')
+                : '表示しない'));
             lines.push('起動: ' + (isStandalone ? 'ホーム画面アプリ' : 'ブラウザ') +
                        ' / 認識: ' + (SpeechRecognitionCtor ? '利用可' : '利用不可') +
                        ' / 録音: ' + (sttSupported() ? '利用可' : '利用不可'));
@@ -1473,8 +1556,8 @@
         var waveColors = null;
         var loudAt = 0;            // 最後に音を検出した時刻
         var waveStartedAt = 0;
-        // 音声認識が audio-capture で落ちた場合、原因の可能性があるので
-        // このセッションでは波形を出さない
+        // 波形のマイクが聞き取りを妨げていると分かった場合、波形を出さない（F-24）。
+        // 起動時に prefs.waveBlockedByApp から引き継ぐ
         var waveformBlocked = false;
 
         var SILENCE_LEVEL = 0.012;     // これ未満を無音とみなす
@@ -4269,12 +4352,18 @@
                 prefs.waveChoiceByUser = true;   // 自分で選んだ設定は、以後こちらで上書きしない
                 savePrefs();
                 if (this.checked) {
-                    if (wantRecording) { waveformBlocked = false; startWaveform(); }
+                    unblockWaveform();      // 自分でオンにしたなら、もう一度試す
                 } else {
                     stopWaveform();
+                    renderWaveBlockNote();
                 }
                 if (wantRecording) startRecogActivity();
                 renderRecogStats();
+            });
+
+            $('waveRetryBtn').addEventListener('click', function () {
+                unblockWaveform();
+                showSuccess('次の録音から波形を表示します');
             });
 
             $('copyStatsBtn').addEventListener('click', function () {
