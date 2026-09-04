@@ -730,6 +730,18 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="favoriteMic">いつも使うマイクの名前（F-27）</label>
+                    <input type="text" id="favoriteMic" placeholder="例: EMEET OfficeCore M0 Plus"
+                           autocapitalize="none" autocorrect="off">
+                    <p class="info-text">
+                        ここに入れた名前のマイクを、<strong>アプリを開くたびに探して接続ボタンを出します</strong>。
+                        名前の一部だけでも一致します（大文字小文字は区別しません）。空欄にすると出しません。<br>
+                        ⚠️ <strong>Bluetooth の接続・ペアリングそのものは、iPhone の「設定 → Bluetooth」でしか行えません。</strong>
+                        アプリからは、すでに接続されている機器を掴みに行くことだけができます。
+                    </p>
+                </div>
+
+                <div class="form-group">
                     <label for="sttMode">書き起こしの方法</label>
                     <select id="sttMode">
                         <option value="device">iPhone の音声認識（無料・その場で文字になる）</option>
@@ -1056,6 +1068,9 @@
         prefs.retentionDays = 30;     // 0 = 履歴を保存しない
         prefs.micDeviceId = '';       // 使うマイク。空なら端末の既定（F-23）
         prefs.micLabel = '';          // 選んだマイクの名前（表示用）
+        // いつも使うマイクの機種名（F-27）。この名前を含む機器を起動のたびに探し、
+        // 接続ボタンを出す。空にすると出さない。部分一致・大文字小文字は区別しない
+        prefs.favoriteMicName = 'EMEET OfficeCore M0 Plus';
         prefs.sttMode = 'device';     // 'device' = iPhone の音声認識 / 'api' = 録音して送る
         prefs.sttEndpoint = '';       // 空なら STT_DEFAULT_ENDPOINT
         prefs.sttModel = '';          // 空なら STT_DEFAULT_MODEL
@@ -1162,6 +1177,7 @@
             if (savedApiKey) $('apiKey').value = savedApiKey;
             var savedSttKey = storage.get(KEY_STT);
             if (savedSttKey) $('sttKey').value = savedSttKey;
+            $('favoriteMic').value = prefs.favoriteMicName || '';
             renderMicOptions();
             refreshMicList(false);      // 許可済みなら名前も出る
             $('sttEndpoint').value = prefs.sttEndpoint || '';
@@ -1758,6 +1774,75 @@
             return false;
         }
 
+        /* F-27 いつも使うマイク（機種名を登録して、起動のたびに接続ボタンを出す）
+         *
+         * 「Bluetooth のあの機械に繋ぐ」を 1 タップにする。接続そのものは iOS の
+         * 仕事なので（C-13）、ここでできるのは
+         *   ① マイクの許可を取って一覧を取り直す
+         *   ② 名前の合う機器を選ぶ
+         *   ③ その deviceId で実際にマイクを開き、iOS に入力をそこへ切り替えさせる
+         * まで。見つからなければ、設定 → Bluetooth で繋ぐよう案内する。 */
+        function favoriteMicName() {
+            return String(prefs.favoriteMicName || '').trim();
+        }
+
+        function findFavoriteMic() {
+            var want = favoriteMicName().toLowerCase();
+            if (!want) return null;
+            for (var i = 0; i < micDevices.length; i++) {
+                var d = micDevices[i];
+                if (!d.deviceId || d.deviceId === 'default' || !d.label) continue;
+                if (d.label.toLowerCase().indexOf(want) >= 0) return d;
+            }
+            return null;
+        }
+
+        // 選んだうえで実際に開き、入力の経路をその機器へ寄せる
+        function grabMic(device) {
+            prefs.micDeviceId = device.deviceId;
+            prefs.micLabel = device.label || favoriteMicName();
+            savePrefs();
+            renderMicOptions();
+            renderRecogStats();
+            return navigator.mediaDevices.getUserMedia({
+                audio: { deviceId: { exact: device.deviceId } }
+            }).then(function (stream) {
+                var track = stream.getAudioTracks()[0];
+                var label = (track && track.label) || prefs.micLabel;
+                // 掴んだことを iOS に伝えるだけで、録音はここでは始めない
+                setTimeout(function () {
+                    stream.getTracks().forEach(function (t) { t.stop(); });
+                }, 400);
+                return label;
+            });
+        }
+
+        function connectFavoriteMic() {
+            var btn = $('micOfferBtn');
+            btn.disabled = true;
+            btn.textContent = '接続しています…';
+            // 名前を出すには許可が要る。ここで取っておくと以後の一覧にも名前が出る
+            refreshMicList(true).then(function () {
+                var found = findFavoriteMic();
+                if (!found) {
+                    renderMicOffer();
+                    showError(favoriteMicName() + ' が見つかりません。\n' +
+                              'iPhone の「設定 → Bluetooth」でこの機器を接続してから、' +
+                              'もう一度このボタンを押してください。\n' +
+                              '（アプリからは Bluetooth の接続そのものはできません）');
+                    return;
+                }
+                grabMic(found).then(function (label) {
+                    renderMicOffer();
+                    showSuccess((label || favoriteMicName()) + ' に接続しました。このマイクで録音します');
+                }).catch(function () {
+                    renderMicOffer();
+                    showError(favoriteMicName() + ' を開けませんでした。\n' +
+                              '他のアプリが使用中か、接続が切れている可能性があります。');
+                });
+            });
+        }
+
         function renderMicOffer() {
             var box = $('micOffer');
             if (!box) return;
@@ -1773,6 +1858,28 @@
 
             // 録音中は「つなぎ直す」（F-25）が主役なので出さない
             if (!micSelectable() || micOfferHidden || wantRecording) { hide(); return; }
+
+            // いつも使うマイクを登録しているなら、起動のたびに接続ボタンを出す（F-27）
+            if (favoriteMicName()) {
+                var fav = findFavoriteMic();
+                var using = fav && prefs.micDeviceId === fav.deviceId;
+                show('favorite',
+                    '🎧 ' + favoriteMicName() + (fav ? (using ? ' を使います' : ' が見つかりました') : ' に接続'),
+                    using
+                        ? 'このマイクで録音します。切れてしまったときは、もう一度押してください。'
+                        : (fav
+                            ? '押すとこのマイクに切り替えます。'
+                            : 'まだ見つかっていません。押すと探して接続します。' +
+                              '見つからないときは iPhone の「設定 → Bluetooth」で接続してください' +
+                              '（アプリからは接続できません）。' +
+                              // 別の外付けマイクが繋がっているなら、それも伝える
+                              (externalMics().length
+                                  ? '\nいま使えるのは ' + externalMics()[0].label +
+                                    ' です（設定の「使うマイク」から選べます）。'
+                                  : '')),
+                    using ? '接続し直す' : '接続する');
+                return;
+            }
 
             if (prefs.micDeviceId) {
                 if (micIsPresent(prefs.micDeviceId)) { hide(); return; }   // すでに使う設定
@@ -4609,9 +4716,21 @@
             }
 
             $('micOfferBtn').addEventListener('click', function () {
-                if (micOfferMode === 'use') useOfferedMic();
+                if (micOfferMode === 'favorite') connectFavoriteMic();
+                else if (micOfferMode === 'use') useOfferedMic();
                 else if (micOfferMode === 'missing') { clearOfferedMic(); checkForMics(); }
                 else checkForMics();
+            });
+            $('favoriteMic').addEventListener('change', function () {
+                prefs.favoriteMicName = this.value.trim();
+                savePrefs();
+                micOfferHidden = false;     // 名前を変えたら、改めて案内する
+                renderMicOffer();
+            });
+            $('favoriteMic').addEventListener('blur', function () {
+                prefs.favoriteMicName = this.value.trim();
+                savePrefs();
+                renderMicOffer();
             });
             $('micOfferLater').addEventListener('click', function () {
                 micOfferHidden = true;      // 次に起動したらまた出す
